@@ -1,0 +1,20 @@
+mysql:
+    extends:
+      file: common-compose.yml
+      service: mysql
+    links:
+      - consul:consul
+
+mysql_replica:
+    extends:
+      file: common-compose.yml
+      service: mysql
+    environment:
+      - CONTAINERBUDDY=file:///etc/containerbuddy-replica.json
+    links:
+      - consul:consul
+
+consul:
+    extends:
+      file: common-compose.yml
+      service: consul

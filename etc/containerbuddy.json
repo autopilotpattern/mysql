@@ -1,0 +1,20 @@
+{
+  "consul": "consul:8500",
+  "onStart": "/opt/containerbuddy/mysql.sh",
+  "services": [
+    {
+      "name": "mysql",
+      "port": 3306,
+      "health": "/opt/containerbuddy/mysql.sh health",
+      "poll": 10,
+      "ttl": 25
+    }
+  ],
+  "backends": [
+    {
+      "name": "mysql",
+      "poll": 10,
+      "onChange": "/opt/containerbuddy/mysql.sh onChange"
+    }
+  ]
+}
