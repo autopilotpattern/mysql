@@ -27,4 +27,5 @@ ENTRYPOINT []
 # send slow query logs to table???
 CMD [ "/opt/containerbuddy/containerbuddy", \
       "mysqld", \
-      "--console"]
+      "--console", \
+      "--log-bin=mysql-bin"]

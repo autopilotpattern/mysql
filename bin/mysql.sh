@@ -38,7 +38,7 @@ checkConfig() {
 # clean up the temporary mysqld service
 cleanup() {
     if [ -n $PID ]; then
-        echo 'Shutting down temporary bootstrap mysqld:' $PID
+        echo 'Shutting down temporary bootstrap mysqld (PID ' $PID ')'
         if ! kill -s TERM "$PID" || ! wait "$PID"; then
             echo >&2 'MySQL init process failed.'
             exit 1
@@ -57,9 +57,9 @@ initializeDb() {
     mysqld --initialize-insecure=on --user=mysql --datadir="${DATADIR}"
     echo 'Database initialized.'
 
-    mysqld --user=mysql --datadir="${DATADIR}" --skip-networking &
+    mysqld --user=mysql --datadir="${DATADIR}" --skip-networking --skip-slave-start &
     PID="$!"
-    echo 'Running temporary bootstrap mysqld PID:' $PID
+    echo 'Running temporary bootstrap mysqld (PID ' $PID ')'
 }
 
 waitForConnection() {
@@ -121,7 +121,6 @@ createReplUser() {
         "${mysql[@]}" <<-EOSQL
 			CREATE USER '$MYSQL_REPL_USER'@'%' IDENTIFIED BY '$MYSQL_REPL_PASSWORD';
 			GRANT REPLICATION SLAVE ON *.* TO '$MYSQL_REPL_USER'@'%';
-			GRANT REPLICATION CLIENT ON *.* TO '$MYSQL_REPL_USER'@'%';
 			FLUSH PRIVILEGES ;
 EOSQL
     fi
@@ -133,7 +132,7 @@ init() {
 
     if [ ! -d "${DATADIR}/mysql" ]; then
         checkConfig        # make sure we have all required environment variables
-        initializeDb       # sets $PID for temporary mysqld while we bootstrap
+        initializeDb       # sets datadir and $PID for temporary mysqld while we bootstrap
         waitForConnection  # sets $mysql[] which we'll use for all future conns
 
         mysql_tzinfo_to_sql /usr/share/zoneinfo | "${mysql[@]}" mysql
@@ -172,32 +171,28 @@ EOSQL
 
 # poll the discovery service until we find the primary node
 getPrimary() {
+    echo 'Waiting for primary...'
     PRIMARY_HOST=
     while true
     do
         PRIMARY_HOST=$(curl -Ls --fail http://consul:8500/v1/catalog/service/mysql \
                          | jq -r '.[0].ServiceAddress')
         if [[ ${PRIMARY_HOST} != "null" ]] && [[ -n ${PRIMARY_HOST} ]]; then
+            echo
+            echo 'Found primary at:' ${PRIMARY_HOST}
             break
         fi
         # no primary nodes up yet, so wait and retry
+        echo -ne '.'
         sleep 1.7
     done
 }
 
-dataDump() {
-    mysqldump --all-databases --master-data > dbdump.db
-}
-
-# TODO: need to make sure $mysql is populated
+# Set up GITD-based replication to the primary; once this is set the
+# replica will automatically try to catch up with the primary by pulling
+# its entire binlog. This is comparatively slow but suitable for small
+# databases.
 setPrimaryForReplica() {
-
-    if [ -e "${DATADIR}/master.status" ]; then
-        local primary_log_file=$(tail -n 1 "${DATADIR}/master.status" | cut -f 1)
-        local primary_log_pos=$(tail -n 1 "${DATADIR}/master.status" | cut -f 2)
-        primary_log_pos=${primary_log_pos:-0}
-    fi
-
     "${mysql[@]}" <<-EOSQL
 		CHANGE MASTER TO
 		MASTER_HOST           = '$PRIMARY_HOST',
@@ -205,12 +200,53 @@ setPrimaryForReplica() {
 		MASTER_PASSWORD       = '$MYSQL_REPL_PASSWORD',
 		MASTER_PORT           = 3306,
 		MASTER_CONNECT_RETRY  = 60,
-		MASTER_LOG_FILE       = '$primary_log_file',
-		MASTER_LOG_POS        = $primary_log_pos,
+        MASTER_AUTO_POSITION  = 1,
 		MASTER_SSL            = 0;
+        START SLAVE;
 EOSQL
 
 }
+
+replica() {
+    checkConfig        # make sure we have all required environment variables
+    initializeDb       # sets datadir and $PID for temporary mysqld while we bootstrap
+    waitForConnection  # sets $mysql[] which we'll use for all future conns
+
+    mysql_tzinfo_to_sql /usr/share/zoneinfo | "${mysql[@]}" mysql
+
+    echo 'Setting up replication.'
+    getPrimary
+    setPrimaryForReplica
+    cleanup
+}
+
+
+# TODO: this section will be for cases where we have a large existing
+# dataset that we need to update from the master before starting
+# replication. This way we avoid running thru the entire binlog, but
+# it requires outside intervention that we won't be able to do easily
+# just via docker-compose
+
+# dataDump() {
+#     mysqldump -h ${PRIMARY_HOST} -p 3306 --all-databases --master-data --set-gtid-purged=ON > dbdump.db
+# }
+
+# importDump() {
+#     mysql < dbdump.db
+#     mysqlbinlog --read-from-remote-server --read-from-remote-master
+# }
+
+# startReadOnly() {
+#     echo 'SET @@global.read_only = ON;' | mysql
+# }
+
+# stopReadOnly() {
+#     echo 'SET @@global.read_only = OFF;' | mysql
+# }
+
+
+# ---------------------------------------------------------
+# Poll functions
 
 # TODO
 health() {
@@ -220,15 +256,6 @@ health() {
 # TODO
 onChange() {
     echo 'Doing onChange handler'
-}
-
-# TODO
-replica() {
-    init
-    echo 'Setting up replication'
-    getPrimary
-    setPrimaryForReplica
-    cleanup
 }
 
 
