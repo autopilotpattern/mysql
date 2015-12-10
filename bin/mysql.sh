@@ -2,6 +2,7 @@
 set -e
 
 PID=
+CONSUL=${CONSUL:-consul}
 
 # set up environment and render my.cnf config
 config() {
@@ -37,7 +38,7 @@ checkConfig() {
 
 # clean up the temporary mysqld service
 cleanup() {
-    if [ -n $PID ]; then
+    if [[ -n $PID ]]; then
         echo 'Shutting down temporary bootstrap mysqld (PID ' $PID ')'
         if ! kill -s TERM "$PID" || ! wait "$PID"; then
             echo >&2 'MySQL init process failed.'
@@ -56,7 +57,9 @@ initializeDb() {
     echo 'Initializing database...'
     mysqld --initialize-insecure=on --user=mysql --datadir="${DATADIR}"
     echo 'Database initialized.'
+}
 
+bootstrapDb() {
     mysqld --user=mysql --datadir="${DATADIR}" --skip-networking --skip-slave-start &
     PID="$!"
     echo 'Running temporary bootstrap mysqld (PID ' $PID ')'
@@ -126,13 +129,19 @@ EOSQL
     fi
 }
 
-# borrowed from Oracle-provided Docker image:
+# reworked from Oracle-provided Docker image:
 # https://github.com/mysql/mysql-docker/blob/mysql-server/5.7/docker-entrypoint.sh
 init() {
 
-    if [ ! -d "${DATADIR}/mysql" ]; then
+    if [ -d "${DATADIR}/mysql" ]; then
         checkConfig        # make sure we have all required environment variables
-        initializeDb       # sets datadir and $PID for temporary mysqld while we bootstrap
+        bootstrapDb        # sets $PID for temporary mysqld while we bootstrap
+        waitForConnection  # sets $mysql[] which we'll use for all future conns
+        stopReplica
+    else
+        checkConfig        # make sure we have all required environment variables
+        initializeDb       # sets datadir
+        bootstrapDb        # sets $PID for temporary mysqld while we bootstrap
         waitForConnection  # sets $mysql[] which we'll use for all future conns
 
         mysql_tzinfo_to_sql /usr/share/zoneinfo | "${mysql[@]}" mysql
@@ -168,23 +177,56 @@ EOSQL
 # ---------------------------------------------------------
 # Replication
 
+# Query Consul for the PRIMARY_NODE key
+getPrimaryNode() {
+    PRIMARY_NODE=$(curl -s http://${CONSUL}:8500/v1/kv/mysql-primary | \
+                          jq -r '.[].Value' | base64 --decode)
+}
 
-# poll the discovery service until we find the primary node
-getPrimary() {
-    echo 'Waiting for primary...'
-    PRIMARY_HOST=
-    while true
-    do
-        PRIMARY_HOST=$(curl -Ls --fail http://consul:8500/v1/catalog/service/mysql \
-                         | jq -r '.[0].ServiceAddress')
+# Query Consul for healthy mysql nodes and check their ServiceID vs
+# PRIMARY_NODE. Sets PRIMARY_HOST to the IP address of a matching node.
+getPrimaryHost() {
+
+    if [[ -z ${PRIMARY_NODE} ]]; then
+        getPrimaryNode
+    fi
+
+    echo "Checking if primary (${PRIMARY_NODE}) is healthy..."
+
+    # providing a 30 second timeout here to avoid bootstrap failures on
+    # transient network paritions
+    for i in {30..0}; do
+        PRIMARY_HOST=$(curl -Ls --fail http://${CONSUL}:8500/v1/catalog/service/mysql?passing \
+            | jq -r 'map(select(.ServiceID == "'${PRIMARY_NODE}'")) | .[0].ServiceAddress')
         if [[ ${PRIMARY_HOST} != "null" ]] && [[ -n ${PRIMARY_HOST} ]]; then
-            echo
             echo 'Found primary at:' ${PRIMARY_HOST}
             break
         fi
-        # no primary nodes up yet, so wait and retry
         echo -ne '.'
-        sleep 1.7
+        sleep 1
+    done
+}
+
+# returns "true" on success or "false" on failure due to CAS
+markSelfPrimary() {
+    PRIMARY_NODE=mysql-$(hostname)
+    echo "Marking ${PRIMARY_NODE} as primary..."
+    for i in {30..0}; do
+        local ok=$(curl -XPUT -s --fail -d ${PRIMARY_NODE} \
+                        "http://${CONSUL}:8500/v1/kv/mysql-primary?cas=0" | jq -r '.')
+        if [[ ${ok} = "true" ]]; then
+            echo
+            break
+        fi
+        if [[ ${ok} = "false" ]]; then
+            # The only way this scenario appears is if we raced with
+            # another node. So we're going to just start over.
+            echo 'Tried to set this instance as primary but primary exists.'
+            echo 'Restarting bootstrap process.'
+            onStart
+        fi
+        echo -ne '.'
+        sleep 1
     done
 }
 
@@ -207,15 +249,30 @@ EOSQL
 
 }
 
+stopReplica() {
+    echo 'STOP SLAVE;' | "${mysql[@]}"
+}
+
 replica() {
     checkConfig        # make sure we have all required environment variables
-    initializeDb       # sets datadir and $PID for temporary mysqld while we bootstrap
+    initializeDb       # sets datadir
+    bootstrapDb        # $PID for temporary mysqld while we bootstrap
     waitForConnection  # sets $mysql[] which we'll use for all future conns
 
     mysql_tzinfo_to_sql /usr/share/zoneinfo | "${mysql[@]}" mysql
 
     echo 'Setting up replication.'
-    getPrimary
+
+    # belt-and-suspenders in the workflow so that if we call this
+    # script with `replica` as the command we assert environment
+    if [[ -z ${PRIMARY_HOST} ]]; then
+        getPrimaryHost
+        if [[ -z ${PRIMARY_HOST} ]]; then
+            echo 'Tried replication setup, but primary is set and not healthy. Exiting!'
+            exit 1
+        fi
+    fi
+
     setPrimaryForReplica
     cleanup
 }
@@ -245,17 +302,44 @@ replica() {
 # }
 
 
-# ---------------------------------------------------------
-# Poll functions
 
-# TODO
-health() {
-    echo 'Doing health check'
+# ---------------------------------------------------------
+# Containerbuddy-called functions
+
+# If Consul knows about the primary already, either setup replication
+# for that primary or exit if it's not healthy. Otherwise, set this
+# node up as a new primary, including initial setup if required.
+onStart() {
+    getPrimaryNode # will set ${PRIMARY_NODE}
+    if [[ -n ${PRIMARY_NODE} ]]; then
+        getPrimaryHost
+        if [[ -n ${PRIMARY_HOST} ]]; then
+            replica
+            exit 0
+        else
+            echo 'Primary is set but not healthy. Exiting!'
+            exit 1
+        fi
+    else
+        markSelfPrimary
+        init
+        cleanup
+        exit 0
+    fi
 }
 
-# TODO
+health() {
+    mysql=( mysql --protocol=socket -u ${MYSQL_USER} -p${MYSQL_PASSWORD})
+    if echo 'SELECT 1' | "${mysql[@]}" &> /dev/null; then
+        exit 0
+    fi
+    exit 1
+}
+
+# TODO:
+# this will be where we hook-in failover behaviors
 onChange() {
-    echo 'Doing onChange handler'
+    echo 'onChange'
 }
 
 
@@ -270,7 +354,6 @@ config
 # make sure that if we've pulled in an external data volume that
 # the mysql user can read it
 chown -R mysql:mysql "${DATADIR}"
-
 
 # if command starts with an option, prepend mysqld
 if [ "${1:0:1}" = '-' ]; then
@@ -292,5 +375,4 @@ if [ ! -z "$cmd" ]; then
 fi
 
 # default behavior: set up the DB
-init
-cleanup
+onStart

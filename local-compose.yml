@@ -9,19 +9,6 @@ mysql:
     ports:
       - 3306
 
-mysql_replica:
-    extends:
-      file: common-compose.yml
-      service: mysql
-    mem_limit: 512m
-    build: .
-    environment:
-      - CONTAINERBUDDY=file:///etc/containerbuddy-replica.json
-    links:
-      - consul:consul
-    ports:
-      - 3306
-
 consul:
     extends:
       file: common-compose.yml
