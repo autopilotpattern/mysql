@@ -7,10 +7,18 @@ CONSUL=${CONSUL:-consul}
 # set up environment and render my.cnf config
 config() {
 
+    # replace thread_concurrency value from environment or use a sensible
+    # default (estimating 1/2 RAM in GBs as the number of CPUs and 2 threads
+    # per CPU)
+    local default=$(awk '/MemTotal/{printf "%.0f\n", ($2 / 1024 / 1024)}' /proc/meminfo)
+    local conc=$(printf 's/^thread_concurrency = .*$/thread_concurrency = %s/' \
+                        ${THREAD_CONCURRENCY:-${default}})
+    sed -i "${conc}" /etc/my.cnf
+
     # replace innodb_buffer_pool_size value from environment
     # or use a sensible default (70% of available physical memory)
     local default=$(awk '/MemTotal/{printf "%.0f\n", ($2 / 1024) * 0.7}' /proc/meminfo)M
-    local buffer=$(printf 's/^innodb_buffer_pool_size = 128M/innodb_buffer_pool_size = %s/' \
+    local buffer=$(printf 's/^innodb_buffer_pool_size = .*$/innodb_buffer_pool_size = %s/' \
                           ${INNODB_BUFFER_POOL_SIZE:-${default}})
     sed -i "${buffer}" /etc/my.cnf
 
