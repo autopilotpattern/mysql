@@ -7,14 +7,6 @@ CONSUL=${CONSUL:-consul}
 # set up environment and render my.cnf config
 config() {
 
-    # replace thread_concurrency value from environment or use a sensible
-    # default (estimating 1/2 RAM in GBs as the number of CPUs and 2 threads
-    # per CPU)
-    local default=$(awk '/MemTotal/{printf "%.0f\n", ($2 / 1024 / 1024)}' /proc/meminfo)
-    local conc=$(printf 's/^thread_concurrency = .*$/thread_concurrency = %s/' \
-                        ${THREAD_CONCURRENCY:-${default}})
-    sed -i "${conc}" /etc/my.cnf
-
     # replace innodb_buffer_pool_size value from environment
     # or use a sensible default (70% of available physical memory)
     local default=$(awk '/MemTotal/{printf "%.0f\n", ($2 / 1024) * 0.7}' /proc/meminfo)M
@@ -238,7 +230,7 @@ markSelfPrimary() {
     done
 }
 
-# Set up GITD-based replication to the primary; once this is set the
+# Set up GTID-based replication to the primary; once this is set the
 # replica will automatically try to catch up with the primary by pulling
 # its entire binlog. This is comparatively slow but suitable for small
 # databases.
