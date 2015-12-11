@@ -4,12 +4,16 @@ MySQL designed for container-native deployment on Joyent's Triton platform.
 
 ### Architecture
 
-We have a primary (`mysql_primary`) and replicas (`mysql`) as separate `docker-compose` services. The replicas ask Consul (via Containerbuddy) for the primary's IP and self-configure replication with the primary in their `onStart` handler. The replicas' `onChange` handler will move replication to a new master if one is created.
+Both the primary and replicas are described as a single `docker-compose` service. During startup, [Containerbuddy](http://containerbuddy.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `onStart` handler.
+
+Replication in this architecture uses [Global Transaction Idenitifers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) rather than binlog positioning as this allows replicas to autoconfigure their position within the binlog. A primary that has the entire execution history can bootstrap a replica with no additional work. The replicas' `onChange` handler will automatically move replication to a new primary if one is created.
+
+A primary that has rotated the binlog or simply has a large binlog will be impractical to use to bootstrap replication without copying data first. In this case, a snapshot of data will be loaded into the new replica and then we will [inject empty transactions](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids-failover.html#replication-gtids-failover-empty) for each transaction in the `gtid_executed` variable from the primary to bring it up to date quickly.
 
 
 ### Configuration
 
-Pass these variables in your environment or via an .env file.
+Pass these variables in your environment or via an `.env` file.
 
 - `MYSQL_USER`: this user will be set up as the default non-root user on the node
 - `MYSQL_PASSWORD`: this user will be set up as the default non-root user on the node
@@ -32,7 +36,7 @@ These variables will be written to `/etc/my.cnf`.
 
 ### Where to Store Data
 
-On Triton we have the bad-assness of ZFS so we don't need to mess around with data volumes.
+On Triton there's not need to use data volumes because the performance hit you normally take with overlay file systems in Linux doesn't happen with ZFS.
 
 ### Usage Against an Existing Database
 
