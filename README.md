@@ -2,13 +2,36 @@
 
 MySQL designed for container-native deployment on Joyent's Triton platform.
 
-### Architecture
+### Running a new cluster
 
-Both the primary and replicas are described as a single `docker-compose` service. During startup, [Containerbuddy](http://containerbuddy.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `onStart` handler.
+Starting a new cluster is easy. Just run `docker-compose up -d` and in a few moments you'll have a running MySQL primary. Both the primary and replicas are described as a single `docker-compose` service. During startup, [Containerbuddy](http://containerbuddy.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `onStart` handler.
 
-Replication in this architecture uses [Global Transaction Idenitifers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) rather than binlog positioning as this allows replicas to autoconfigure their position within the binlog. A primary that has the entire execution history can bootstrap a replica with no additional work. The replicas' `onChange` handler will automatically move replication to a new primary if one is created.
+Run `docker-compose scale mysql=2` to add a replica (or more than one!). Replication in this architecture uses [Global Transaction Idenitifers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) rather than binlog positioning as this allows replicas to autoconfigure their position within the binlog. A primary that has the entire execution history can bootstrap a replica with no additional work. The replicas' `onChange` handler will automatically move replication to a new primary if one is created.
 
-A primary that has rotated the binlog or simply has a large binlog will be impractical to use to bootstrap replication without copying data first. In this case, a snapshot of data will be loaded into the new replica and then we will [inject empty transactions](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids-failover.html#replication-gtids-failover-empty) for each transaction in the `gtid_executed` variable from the primary to bring it up to date quickly.
+So long as we're working with a new cluster that has never rotated the binlog on the primary (and where there's not too much data yet), the new replicas will be able to catch up to the primary without further intervention. But if you're bringing up a replica in an existing cluster, you'll need to try the following workflow.
+
+### Adding a replica to an existing cluster
+
+A primary that has rotated the binlog or simply has a large binlog will be impractical to use to bootstrap replication without copying data first. In this case we're going to [copy the MySQL data directory](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids-failover.html) to the new replica's file system.
+
+In order to safely snapshot MySQL, we need to prevent new writes. In order to avoid downtime for the application, we recommend using one of the other replicas as a source for the data directory. The process that's been automated here is as follows:
+
+- Write a "lock" key to Consul which the replica will look for so that it doesn't complete replication setup until it has the data transfered from the source.
+- Start a new replica node. The new replica will see there's an existing primary, but will pause the setup process until the lock key has been removed from Consul.
+- Use `docker exec` to run `STOP SLAVE` on the source node.
+- Copy the data directory from the source node to the new replica.
+- Use `docker exec` to run `START SLAVE` on the source node.
+- Remove the lock key from Consul.
+- The new replica will see the removed key and continue replication setup, looking for the primary in Consul and running `CHANGE MASTER` and `START SLAVE`.
+
+
+### Promoting a replica to primary
+
+Taking an existing replica and making it a primary for the cluster is a simple matter of updating the flag we've set in Consul and then allowing the Containerbuddy `onChange` handlers to update the replication topology for each node independently.
+
+- Update the `mysql-primary` in Consul.
+- The `onChange` handlers on the other replicas will automatically detect the change in what node is the primary, and will execute `CHANGE MASTER` to change their replication source to the new primary.
+- At any point after this, we use `docker exec` to run `STOP SLAVE` on the new primary and can tear down the old primary if it still exists.
 
 
 ### Configuration
