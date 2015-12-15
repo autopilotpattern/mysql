@@ -8,7 +8,7 @@
 # container size. Set to the amount of RAM for the most important data
 # cache in MySQL. Start at 70% of total RAM for dedicated server, else 10%.
 
-innodb_buffer_pool_size = 128M
+innodb_buffer_pool_size = $buffer
 
 # Remove leading # to turn on a very important data integrity option: logging
 # changes to the binary log between backups.
@@ -19,8 +19,8 @@ enforce-gtid-consistency=ON
 # Required for MySQL replication. The Containerbuddy `onStart` handler will
 # overwrite report-host with the container hostname and server-id with a
 # numerical ID derived from the container hostname
-server-id=SERVER_ID
-report-host=HOSTNAME
+server-id=$server_id
+report-host=$hostname
 
 # We have intentionally not set log_bin here so that we're forced to pass
 # it into the command-line parameters. This lets us bootstrap the DB without
@@ -42,7 +42,7 @@ max_heap_table_size = 128M
 
 
 skip-host-cache
-skip-name-resolve
+#skip-name-resolve
 datadir=/var/lib/mysql
 socket=/var/lib/mysql/mysql.sock
 secure-file-priv=/var/lib/mysql-files

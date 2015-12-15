@@ -1,11 +1,11 @@
 {
   "consul": "consul:8500",
-  "onStart": "/opt/containerbuddy/mysql.sh",
+  "onStart": "python /bin/triton-mysql.py",
   "services": [
     {
       "name": "mysql",
       "port": 3306,
-      "health": "/opt/containerbuddy/mysql.sh health",
+      "health": "python /bin/triton-mysql.py health",
       "poll": 10,
       "ttl": 25
     }
@@ -14,7 +14,7 @@
     {
       "name": "mysql",
       "poll": 10,
-      "onChange": "/opt/containerbuddy/mysql.sh onChange"
+      "onChange": "python /bin/triton-mysql.py onChange"
     }
   ]
 }
