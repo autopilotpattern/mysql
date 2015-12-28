@@ -1,18 +1,18 @@
 FROM mysql/mysql-server:5.7.9
 
+# need these for pycrypto so we can secure access to backups
 RUN yum install -y tar \
+    python-devel \
+    gcc \
     && yum clean all
 
-# get Python driver for MySQL and Consul
+# get Python drivers MySQL, Consul, and Manta
+# TODO: move these into a requirements.txt file
 RUN curl -Ls -o get-pip.py https://bootstrap.pypa.io/get-pip.py && \
     python get-pip.py && \
     pip install PyMySQL==0.6.7 && \
-    pip install python-Consul==0.4.7
-
-# need something for parsing JSON
-RUN curl -Lo /usr/bin/jq \
-    https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64 && \
-    chmod +x /usr/bin/jq
+    pip install python-Consul==0.4.7 && \
+    pip install manta==2.4.0
 
 # get Containerbuddy release
 RUN export CB=containerbuddy-0.0.5 &&\

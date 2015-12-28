@@ -16,6 +16,7 @@ import time
 
 import pymysql
 import consul as pyconsul
+import manta
 
 logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(message)s',
                     stream=sys.stdout,
@@ -66,9 +67,6 @@ class MySQLConfig(object):
         self.repl_user = os.environ.get('MYSQL_REPL_USER', None)
         self.repl_password = os.environ.get('MYSQL_REPL_PASSWORD', None)
         self.datadir = os.environ.get('MYSQL_DATADIR', '/var/lib/mysql')
-        self.manta_user = os.environ.get('MANTA_USER', None)
-        self.manta_key = os.environ.get('MANTA_KEY_ID', None)
-        self.manta_url = os.environ.get('MANTA_URL', 'https://us-east.manta.joyent.com')
 
         # make sure that if we've pulled in an external data volume that
         # the mysql user can read it
@@ -102,13 +100,32 @@ class MySQLConfig(object):
         with open('/etc/my.cnf', 'w') as f:
             f.write(rendered)
 
-        # If provided, create the necessary key files for accessing Manta,
-        # based on env vars provided in the docker run command.
-        if self.manta_key:
-            path = '/{}/.ssh'.format(getpass.getuser())
-            os.mkdir(path)
-            with open(path + '/manta', 'w') as f:
-                f.write(self.manta_key)
+class Manta(object):
+
+    def __init__(self):
+        self.user = os.environ.get('MANTA_USER', None)
+        self.key_id = os.environ.get('MANTA_KEY_ID', None)
+        self.private_key = os.environ.get('MANTA_PRIVATE_KEY')
+        self.url = os.environ.get('MANTA_URL', 'https://us-east.manta.joyent.com')
+        self.bucket = os.environ.get('MANTA_BUCKET', None)
+
+        # TODO: currently errors out with:
+        # manta.errors.MantaAPIError: (AccountDoesNotExist)
+        self.signer = manta.PrivateKeySigner(self.key_id, self.private_key)
+        self.client = manta.MantaClient(self.url,
+                                        self.user,
+                                        self.signer)
+
+    def get_backup(self, backup_id, outfile):
+        mpath = '/{}/stor/{}/{}'.format(self.user, self.bucket, backup_id)
+        data = self.client.get_object(mpath)
+        with open(outfile, 'w') as f:
+            f.write(data)
+
+    def put_backup(self, backup_id, infile):
+        mpath = '/{}/stor/{}/{}'.format(self.user, self.bucket, backup_id)
+        with open(infile, 'r') as f:
+            self.client.put_object(mpath, file=f)
 
 # ---------------------------------------------------------
 # Containerbuddy config is where we rewrite Containerbuddy's own config
@@ -546,8 +563,11 @@ def get_ip(iface='eth0'):
 # default behavior will be to start mysqld, running the
 # initialization if required
 if __name__ == '__main__':
+
     config = MySQLConfig()
     config.render()
+    manta_config = Manta()
+
     if len(sys.argv) > 1:
         try:
             locals()[sys.argv[1]]()

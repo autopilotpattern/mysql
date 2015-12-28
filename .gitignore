@@ -1,1 +1,4 @@
 .env
+.pyc
+manta
+manta.pub

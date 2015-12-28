@@ -9,6 +9,7 @@ mysql:
       - CONTAINERBUDDY=file:///etc/containerbuddy.json
       - MYSQL_RANDOM_ROOT_PASSWORD=yes
     # - MYSQL_ONETIME_PASSWORD=yes # not sure about this yet
+      - MANTA_PRIVATE_KEY
 
     # expose for linking, but each container gets a private IP for
     # internal use as well
