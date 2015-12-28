@@ -1,6 +1,7 @@
 from __future__ import print_function
 import fcntl
 import getpass
+import json
 import logging
 import os
 import pwd
@@ -22,8 +23,10 @@ logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(message)s',
 consul = pyconsul.Consul(host=os.environ.get('CONSUL', 'consul'))
 config = None
 
-# enum for node state
-NONE, PRIMARY, BACKUP, REPLICA = range(4)
+# consts for node state
+PRIMARY = 'mysql-primary'
+STANDBY = 'mysql-standby'
+REPLICA = 'mysql'
 
 # ---------------------------------------------------------
 # MySQLNode represents an instance of a mysql container.
@@ -31,16 +34,27 @@ NONE, PRIMARY, BACKUP, REPLICA = range(4)
 class MySQLNode():
 
     def __init__(self, name='', ip='', state=None):
-        self.name = name if name else 'mysql-{}'.format(socket.gethostname())
+        self.hostname = socket.gethostname()
+        self.name = name if name else 'mysql-{}'.format(self.hostname)
         self.ip = ip if ip else get_ip()
-        self.state = state if state is not None else NONE
+        self.state = state
 
+    # return the node state if we have it, otherwise fetch from Consul
+    # and cache the result
+    def get_state(self):
+        if not self.state:
+            if self.hostname == get_primary_node():
+                self.state = PRIMARY
+            elif self.hostname == get_standby_node():
+                self.state = STANDBY
+        logging.info('get_state: %s', self.state)
+        return self.state
 
 # ---------------------------------------------------------
-# Config is where we store and access environment variables and render
+# MySQLConfig is where we store and access environment variables and render
 # the mysqld configuration file based on those values.
 
-class Config():
+class MySQLConfig(object):
 
     def __init__(self):
         self.mysql_db = os.environ.get('MYSQL_DATABASE', None)
@@ -97,34 +111,83 @@ class Config():
                 f.write(self.manta_key)
 
 # ---------------------------------------------------------
+# Containerbuddy config is where we rewrite Containerbuddy's own config
+# so that we can dynamically alter what service we advertise
+
+class Containerbuddy(object):
+
+    def __init__(self, node):
+        # TODO: we should make sure we can support JSON-in-env-var
+        # the same as Containerbuddy itself
+        self.node = node
+        self.path = os.environ.get('CONTAINERBUDDY').replace('file://', '')
+        with open(self.path, 'r') as f:
+            self.config = json.loads(f.read())
+
+    def update(self):
+        state = self.node.get_state()
+        if self.config['services'][0]['name'] != state:
+            self.config['services'][0]['name'] = state
+            self.render()
+            return True
+
+    def render(self):
+        new_config = json.dumps(self.config)
+        logging.info(new_config)
+        with open(self.path, 'w') as f:
+            f.write(new_config)
+
+    # force Containerbuddy to reload its configuration
+    def reload(self):
+        logging.info('Reloading Containerbuddy configuration.')
+        #subprocess.call(['kill', '-HUP', '1'])
+        os.kill(1, signal.SIGHUP)
+
+# ---------------------------------------------------------
 # Top-level functions called by Containerbuddy
 
 # Set up this node as the primary (if none yet exists), or the
-# backup (if none yet exists), or replica (default case)
+# standby (if none yet exists), or replica (default case)
 def on_start():
     if not get_primary_node():
         run_as_primary()
-    elif not get_backup_node():
-        run_as_backup()
+    elif not get_standby_node():
+        run_as_standby()
     else:
         run_as_replica()
+
     sys.exit(0)
 
 # run a simple health check
 def health():
     try:
-        mysql_exec(pymsql.connect(), 'SELECT 1', ())
+        logging.info('health fired!')
+        node = MySQLNode()
+        cb = Containerbuddy(node)
+        if cb.update():
+            cb.reload()
+
+        if node.state == STANDBY:
+            check_for_snapshot(node)
+        # TODO: getting access denied for root@localhost
+        # mysql_exec(pymysql.connect(), 'SELECT 1', ())
         sys.exit(0)
-    except:
+    except Exception as ex:
+        logging.exception(ex)
         sys.exit(1)
 
 # this will be where we hook-in failover behaviors
 def on_change():
     try:
         # TODO
-        log.info('on_change fired!')
+        logging.info('on_change fired!')
+        node = MySQLNode()
+        cb = Containerbuddy(node)
+        if cb.update():
+            cb.reload()
         sys.exit(0)
-    except:
+    except Exception as ex:
+        logging.exception(ex)
         sys.exit(1)
 
 
@@ -134,7 +197,7 @@ def on_change():
 # ported and reworked from Oracle-provided Docker image:
 # https://github.com/mysql/mysql-docker/blob/mysql-server/5.7/docker-entrypoint.sh
 def run_as_primary():
-    node = MySQLNode()
+    node = MySQLNode(state=PRIMARY)
     mark_as_primary(node)
     if os.path.isdir(os.path.join(config.datadir, 'mysql')):
         node.temp_pid = start_temp_db()
@@ -143,9 +206,9 @@ def run_as_primary():
     else:
         initialize_db()
         node.temp_pid = start_temp_db()
+        set_timezone_info()
         node.conn = wait_for_connection()
         setup_root_user(node.conn)
-        set_timezone_info(node.conn)
         create_db(node.conn)
         create_default_user(node.conn)
         create_repl_user(node.conn)
@@ -154,25 +217,29 @@ def run_as_primary():
 
     cleanup_temp_db(node.temp_pid)
 
-
-def run_as_backup():
-    node = MySQLNode()
-    pass
-
+# the startup of a standby is identical to the replica except that
+# we mark ourselves as standby first.
+def run_as_standby():
+    node = MySQLNode(state=STANDBY)
+    mark_as_standby(node)
+    _run_replica(node)
 
 def run_as_replica():
-    node = MySQLNode()
+    node = MySQLNode(state=REPLICA)
+    _run_replica(node)
+
+def _run_replica(node):
     initialize_db()
     node.temp_pid = start_temp_db()
+    set_timezone_info()
     node.conn = wait_for_connection()
-    set_timezone_info(node.conn)
 
     logging.info('Setting up replication.')
-    #waitForReplicationLock # wait for the lock to be removed from Consul, if any
+    if has_snapshot(node.conn):
+        get_snapshot(node.conn)
 
     set_primary_for_replica(node.conn)
     cleanup_temp_db(node.temp_pid)
-
 
 
 # ---------------------------------------------------------
@@ -191,7 +258,10 @@ def start_temp_db():
 
 # clean up the temporary mysqld service that we use for bootstrapping
 def cleanup_temp_db(pid):
-    os.killpg(pid, signal.SIGTERM)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        logging.info('Failed to close temp DB at PID %s', pid)
 
 
 def wait_for_connection(timeout=30):
@@ -223,11 +293,11 @@ def mark_with_cas(key, val, timeout=10):
 
 # Write flag to Consul to mark this node as primary
 def mark_as_primary(node):
-    if not mark_with_cas('mysql-primary', node.name):
+    if not mark_with_cas('mysql-primary', node.hostname):
         logging.error('Tried to mark node primary but primary exists, '
                       'restarting bootstrap process.')
         on_start()
-
+    node.state = PRIMARY
 
 def initialize_db():
     try:
@@ -249,9 +319,7 @@ def initialize_db():
     logging.info('Database initialized.')
 
 
-def setup_root_user(conn=None):
-    if not conn:
-        conn = wait_for_connection()
+def setup_root_user(conn):
     if config.mysql_random_root_password:
         bytes = os.urandom(128)
         chars = string.ascii_letters + string.digits + '!@#$%&^*()'
@@ -309,14 +377,21 @@ def create_repl_user(conn):
 # This is kinda gross but the PyMySQL client has a bug where this
 # large bulk insert causes a BrokenPipeError exception.
 # ref https://github.com/PyMySQL/PyMySQL/issues/397
-def set_timezone_info(conn):
-    sql = subprocess.Popen(['mysql_tzinfo_to_sql', '/usr/share/zoneinfo'],
-                           stdout=subprocess.PIPE)
-    client = subprocess.Popen(['mysql', '-u root'],
-                              stdin=sql.stdout,
-                              stdout=subprocess.PIPE)
-    sql.stdout.close()
-    output = client.communicate()[0]
+def set_timezone_info():
+
+    # because we're using the external mysql client, we need to
+    # check that the daemon is up but then close the connection
+    # so that the socket isn't locked.
+    conn = wait_for_connection()
+    conn.close()
+
+    pipeline = ('/usr/bin/mysql_tzinfo_to_sql /usr/share/zoneinfo | '
+                '/usr/bin/mysql -uroot --protocol=socket '
+                '--socket=/var/lib/mysql/mysql.sock')
+    try:
+        subprocess.check_output(pipeline)
+    except (subprocess.CalledProcessError, OSError):
+        logging.error('mysql_tzinfo_to_sql returned error.')
 
 
 # TODO
@@ -335,16 +410,40 @@ def run_external_scripts(path):
 # ---------------------------------------------------------
 # functions to support replication
 
-def mark_as_backup(node):
-    if not mark_with_cas('mysql-backup', node.name):
-        logging.error('Tried to mark node backup but backup exists, '
+def mark_as_standby(node):
+    if not mark_with_cas('mysql-standby', node.hostname):
+        logging.error('Tried to mark node standby but standby exists, '
                       'restarting bootstrap process.')
         on_start()
-
+    node.state = STANDBY
 
 def stop_replication(conn):
     mysql_exec(conn, 'STOP SLAVE', ())
 
+
+# TODO:
+# check if there are files on Manta
+def has_snapshot(conn):
+    logging.info('has_snapshot')
+    return True
+
+# TODO
+# pull files from Manta
+def get_snapshot(conn):
+    logging.info('get_snapshot')
+    pass
+
+# TODO
+# check if it's time to do a snapshot
+def check_for_snapshot(node):
+    logging.info('check_for_snapshot')
+    pass
+
+# TODO
+# halt replication and copy files to Manta
+def write_snapshot(conn):
+    logging.info('write_snapshot')
+    pass
 
 # Set up GTID-based replication to the primary; once this is set the
 # replica will automatically try to catch up with the primary by pulling
@@ -352,16 +451,17 @@ def stop_replication(conn):
 # databases.
 def set_primary_for_replica(conn):
     primary = get_primary_host()
-    sql = ('CHANGE MASTER TO'
-           'MASTER_HOST           = `{}`,'
-           'MASTER_USER           = `{}`,'
-           'MASTER_PASSWORD       = %s,'
-           'MASTER_PORT           = 3306,'
-           'MASTER_CONNECT_RETRY  = 60,'
-           'MASTER_AUTO_POSITION  = 1,'
-           'MASTER_SSL            = 0;'
-           'START SLAVE;',format(primary, config.repl_user))
-    mysql_exec(conn, sql, (config.repl_password,))
+    sql = ('CHANGE MASTER TO '
+           'MASTER_HOST           = %s, '
+           'MASTER_USER           = %s, '
+           'MASTER_PASSWORD       = %s, '
+           'MASTER_PORT           = 3306, '
+           'MASTER_CONNECT_RETRY  = 60, '
+           'MASTER_AUTO_POSITION  = 1, '
+           'MASTER_SSL            = 0; '
+           'START SLAVE;')
+    logging.info(sql)
+    mysql_exec(conn, sql, (primary, config.repl_user, config.repl_password,))
 
 
 # Query Consul for healthy mysql nodes and check their ServiceID vs
@@ -374,11 +474,12 @@ def get_primary_host(timeout=30):
 
     while timeout > 0:
         try:
-            nodes = consul.catalog.service('mysql')[1]
+            nodes = consul.catalog.service('mysql-primary')[1]
             ips = [service['ServiceAddress'] for service in nodes
-                   if service['ServiceID'] == primary]
+                   if service['ServiceID'].endswith(primary)]
             return ips[0]
         except IndexError:
+            logging.error('No mysql-primary found.')
             break
         except:
             timeout = timeout - 1
@@ -397,10 +498,10 @@ def get_primary_node(timeout=10):
     raise ex
 
 
-def get_backup_node(timeout=10):
+def get_standby_node(timeout=10):
     while timeout > 0:
         try:
-            return get_from_consul('mysql-backup')
+            return get_from_consul('mysql-standby')
         except Exception as ex:
             timeout = timeout - 1
             time.sleep(1)
@@ -414,7 +515,6 @@ def get_from_consul(key):
     if result[1]:
         return result[1]['Value']
     return None
-
 
 # ---------------------------------------------------------
 # utility functions
@@ -446,7 +546,7 @@ def get_ip(iface='eth0'):
 # default behavior will be to start mysqld, running the
 # initialization if required
 if __name__ == '__main__':
-    config = Config()
+    config = MySQLConfig()
     config.render()
     if len(sys.argv) > 1:
         try:

@@ -21,3 +21,7 @@ test:
 	docker-compose -p my -f local-compose.yml build
 	docker-compose -p my -f local-compose.yml up -d
 	docker ps
+	# debug
+	sleep 20
+	docker-compose -p my -f local-compose.yml scale mysql=2
+	docker ps
