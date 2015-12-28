@@ -15,11 +15,11 @@ RUN curl -Lo /usr/bin/jq \
     chmod +x /usr/bin/jq
 
 # get Containerbuddy release
-RUN export CB=containerbuddy-0.0.3 &&\
+RUN export CB=containerbuddy-0.0.5 &&\
     curl -Lo /tmp/${CB}.tar.gz \
-    https://github.com/joyent/containerbuddy/releases/download/0.0.3/${CB}.tar.gz && \
+    https://github.com/joyent/containerbuddy/releases/download/0.0.5/${CB}.tar.gz && \
 	tar -xf /tmp/${CB}.tar.gz && \
-    mv /build/containerbuddy /bin/
+    mv /containerbuddy /bin/
 
 # configure Containerbuddy and MySQL
 COPY bin/* /bin/
