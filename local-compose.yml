@@ -4,6 +4,8 @@ mysql:
       service: mysql
     mem_limit: 512m
     build: .
+    #volumes:
+    #  - ~/src/tgross/triton-mysql/tmp/backup:/tmp/backup
     links:
       - consul:consul
     ports:

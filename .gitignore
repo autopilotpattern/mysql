@@ -1,4 +1,10 @@
+# build outputs
+*.pyc
+
+# credentials
 .env
-.pyc
 manta
 manta.pub
+
+# temp
+python-manta/

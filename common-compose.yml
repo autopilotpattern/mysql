@@ -7,7 +7,7 @@ mysql:
     env_file: .env
     environment:
       - CONTAINERBUDDY=file:///etc/containerbuddy.json
-      - MYSQL_RANDOM_ROOT_PASSWORD=yes
+    # - MYSQL_RANDOM_ROOT_PASSWORD=yes
     # - MYSQL_ONETIME_PASSWORD=yes # not sure about this yet
       - MANTA_PRIVATE_KEY
 
