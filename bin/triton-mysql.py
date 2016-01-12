@@ -39,10 +39,15 @@ PRIMARY = 'mysql-primary'
 STANDBY = 'mysql-standby'
 REPLICA = 'mysql'
 
+# determines whether we use the primary for snapshots or a separate standby
+# replica that doesn't take part in serving queries.
+USE_STANDBY = os.environ.get('USE_STANDBY', False)
+
 # consts for keys
 BACKUP_SERVICE_NAME = os.environ.get('BACKUP_SERVICE_NAME', 'mysql-backup')
 BACKUP_ID_KEY = os.environ.get('BACKUP_ID_KEY', 'mysql-backup')
 LAST_BACKUP_KEY = os.environ.get('LAST_BACKUP_KEY', 'mysql-last-backup')
+LAST_BINLOG_KEY = os.environ.get('LAST_BINLOG_KEY', 'mysql-last-binlog')
 BACKUP_TTL_KEY = os.environ.get('BACKUP_TTL_KEY', 'mysql-backup-run')
 BACKUP_NAME = os.environ.get('BACKUP_NAME', 'mysql-backup')
 BACKUP_TTL = '{}s'.format(os.environ.get('BACKUP_TTL', 86400)) # every 24 hours
@@ -68,9 +73,18 @@ class MySQLNode(object):
         if not self.state:
             if self.hostname == get_primary_node():
                 self.state = PRIMARY
-            elif self.hostname == get_standby_node():
+            elif USE_STANDBY and (self.hostname == get_standby_node()):
                 self.state = STANDBY
         return self.state
+
+    def is_primary(self):
+        return self.state == PRIMARY
+
+    def is_snapshot_node(self):
+        if USE_STANDBY:
+             return self.state == STANDBY
+        else:
+            return self.state == PRIMARY
 
 # ---------------------------------------------------------
 
@@ -95,7 +109,7 @@ class MySQLConfig(object):
 
         # make sure that if we've pulled in an external data volume that
         # the mysql user can read it
-        take_ownership()
+        take_ownership(self)
 
     def _parse_environ_bool(self, var, default=True):
         """
@@ -223,14 +237,13 @@ def on_start():
     primary = get_primary_node()
     if not primary or primary == get_name():
         run_as_primary()
-    else:
+        return
+    elif USE_STANDBY:
         standby = get_standby_node()
         if not standby or standby == get_name():
             run_as_standby()
-        else:
-            run_as_replica()
-
-    sys.exit(0)
+            return
+    run_as_replica()
 
 def health():
     """
@@ -239,8 +252,8 @@ def health():
     changed externally), or if we need to make a backup because the
     backup TTL has expired.
     """
+    log.debug('health check fired.')
     try:
-        log.debug('health check fired.')
         node = MySQLNode()
         cb = Containerbuddy(node)
         if cb.update():
@@ -254,19 +267,18 @@ def health():
                    timeout=cb.config['services'][0]['ttl'])
         node.conn = wait_for_connection(**ctx)
 
-        if node.get_state() == STANDBY:
-            if is_time_for_snapshot():
-                try:
-                    stop_replication(node.conn)
-                    write_snapshot(node.conn)
-                except Exception as ex:
-                    log.exception(ex)
-                finally:
-                    # this will potentially reset the primary just in case it
-                    # changed while we were offline
-                    set_primary_for_replica(node.conn)
+        if (node.is_snapshot_node() and
+                (is_binlog_stale(node.conn) or is_time_for_snapshot())):
+            try:
+                write_snapshot(node.conn)
+            except Exception as ex:
+                # we're going to log but not sys.exit(1) here so that
+                # we don't mark the primary as unhealthy when a backup
+                # fails. The BACKUP_TTL_KEY will expire so we can alert
+                # on that externally.
+                log.exception(ex)
 
-        mysql_exec(node.conn, 'SELECT 1', ())
+        mysql_query(node.conn, 'SELECT 1', ())
         sys.exit(0)
     except Exception as ex:
         log.exception(ex)
@@ -275,8 +287,8 @@ def health():
 
 # TODO: this will be where we hook-in failover behaviors
 def on_change():
+    log.debug('on_change check fired.')
     try:
-        log.debug('on_change check fired.')
         node = MySQLNode()
         cb = Containerbuddy(node)
         if cb.update():
@@ -317,8 +329,11 @@ def run_as_primary():
         run_external_scripts('/etc/initdb.d')
         expire_root_password(node.conn)
 
-    # backup the DB to use as a new replication target
-    write_snapshot(node.conn)
+    if USE_STANDBY:
+        # if we're using a standby instance then we need to first
+        # snapshot the primary so that we can bootstrap the standby.
+        write_snapshot(node.conn)
+
     cleanup_temp_db(node.temp_pid)
 
 
@@ -449,15 +464,16 @@ def make_datadir():
         os.mkdir(config.datadir, 0770)
     except OSError:
         pass
-    take_ownership()
+    take_ownership(config)
 
 
-def take_ownership(owner='mysql', directory=config.datadir):
+def take_ownership(config, owner='mysql'):
     """
-    Set ownershup of all directories and files under `directory`
+    Set ownership of all directories and files under config.datadir
     to `owner`'s UID and GID. Defaults to setting ownership for
-    mysql user on the data directory.
+    mysql user.
     """
+    directory = config.datadir
     user = pwd.getpwnam(owner)
     os.chown(directory, user.pw_uid, user.pw_gid)
     for root, dirs, files in os.walk(config.datadir):
@@ -600,7 +616,16 @@ def restore_from_snapshot(filename):
                            '--force-non-empty-directories',
                            '--copy-back',
                            '/tmp/backup'])
-    take_ownership()
+    take_ownership(config)
+
+def is_binlog_stale(conn):
+    results = mysql_query(conn, 'SHOW MASTER STATUS', ())
+    try:
+        binlog_file = results[0][0]
+        last_binlog_file = get_from_consul(LAST_BINLOG_KEY)
+    except IndexError:
+        return True
+    return binlog_file != last_binlog_file
 
 def is_time_for_snapshot():
     """ Check if it's time to do a snapshot """
@@ -628,6 +653,14 @@ def write_snapshot(conn):
 
     if create_snapshot(backup_id):
         consul.kv.put(LAST_BACKUP_KEY, backup_id)
+
+        # write the filename of the binlog to Consul so that we know if
+        # we've rotated since the last backup.
+        # query lets IndexError bubble up -- something's broken
+        results = mysql_query(conn, 'SHOW MASTER STATUS', ())
+        binlog_file = results[0][0]
+        consul.kv.put(LAST_BINLOG_KEY, binlog_file)
+
 
 def create_snapshot(backup_id):
     log.debug('create_snapshot')
@@ -753,6 +786,16 @@ def mysql_exec(conn, sql, params):
             log.debug(params)
             cursor.execute(sql, params)
             conn.commit()
+    except Exception:
+        raise # re-raise so that we exit
+
+def mysql_query(conn, sql, params):
+    try:
+        with conn.cursor() as cursor:
+            log.debug(sql)
+            log.debug(params)
+            cursor.execute(sql, params)
+            return cursor.fetchall()
     except Exception:
         raise # re-raise so that we exit
 
