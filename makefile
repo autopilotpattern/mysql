@@ -14,8 +14,9 @@ run:
 	docker-compose -p my up -d
 	docker-compose -p my scale mysql=3
 
-
+# -------------------------------------------------------
 # for testing against Docker locally
+
 stop-local:
 	docker-compose -p my -f local-compose.yml stop || true
 	docker-compose -p my -f local-compose.yml rm -f || true
@@ -25,35 +26,20 @@ build-local:
 
 cleanup:
 	-mrm -r /${SDC_ACCOUNT}/stor/triton-mysql/
-	mmkdir /${SDC_ACCOUNT}/stor/triton-mysql --role-tag=triton_mysql
+	mmkdir /${SDC_ACCOUNT}/stor/triton-mysql
+	mchmod -- +triton_mysql /${SDC_ACCOUNT}/stor/triton-mysql
 
 test: stop-local build-local
 	MANTA_PRIVATE_KEY=`cat manta` docker-compose -p my -f local-compose.yml up -d
 	docker ps
-
-standby:
-	MANTA_PRIVATE_KEY=`cat manta` docker-compose -p my -f local-compose.yml scale mysql=2
-	docker ps
+	docker logs -f my_mysql_1
 
 replica:
-	MANTA_PRIVATE_KEY=`cat manta` docker-compose -p my -f local-compose.yml scale mysql=3
+	MANTA_PRIVATE_KEY=`cat manta` docker-compose -p my -f local-compose.yml scale mysql=2
 	docker ps
+	docker logs -f my_mysql_2
 
-python-manta:
-	git clone git@github.com:tgross/python-manta.git
-
-python-manta-builder:
-	head -15 Dockerfile > Dockerfile-builder
-	docker build -f Dockerfile-builder -t python-manta-builder .
-	rm Dockerfile-builder
-
-python-manta/dist/manta-2.4.1-py2-none-any.whl: python-manta-builder python-manta
-	docker run --rm \
-		-v `pwd`:/src \
-		-w /src/python-manta \
-		my_mysql python setup.py bdist_wheel
-
-deps: python-manta/dist/manta-2.4.1-py2-none-any.whl
+# -------------------------------------------------------
 
 # create user and policies for backups
 # usage:
@@ -72,4 +58,5 @@ manta:
 	sdc-role create --name=triton_mysql \
 		--policies=triton_mysql \
 		--members=triton_mysql
-	mmkdir ${SDC_ACCOUNT}/stor/triton-mysql --role-tag=triton_mysql
+	mmkdir ${SDC_ACCOUNT}/stor/triton-mysql
+	mchmod -- +triton_mysql /${SDC_ACCOUNT}/stor/triton-mysql
