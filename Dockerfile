@@ -17,11 +17,6 @@ RUN curl -Ls -o get-pip.py https://bootstrap.pypa.io/get-pip.py && \
         python-Consul==0.4.7 \
         manta==2.5.0
 
-#COPY python-manta/dist/manta-2.4.2-py2-none-any.whl /src/
-#COPY python-manta/requirements.txt /src/
-#RUN pip install -r /src/requirements.txt && \
-#    pip install --no-index --find-links=/src/ manta==2.4.2
-
 # get Containerbuddy release
 RUN export CB=containerbuddy-0.1.0 &&\
     curl -Lo /tmp/${CB}.tar.gz \
