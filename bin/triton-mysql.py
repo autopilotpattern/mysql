@@ -20,7 +20,8 @@ import manta
 
 logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(message)s',
                     stream=sys.stdout,
-                    level=logging.DEBUG)
+                    level=logging.getLevelName(
+                        os.environ.get('LOG_LEVEL', 'DEBUG')))
 requests_logger = logging.getLogger('requests')
 requests_logger.setLevel(logging.WARN)
 
@@ -44,11 +45,9 @@ REPLICA = 'mysql'
 USE_STANDBY = os.environ.get('USE_STANDBY', False)
 
 # consts for keys
-BACKUP_SERVICE_NAME = os.environ.get('BACKUP_SERVICE_NAME', 'mysql-backup')
-BACKUP_ID_KEY = os.environ.get('BACKUP_ID_KEY', 'mysql-backup')
+BACKUP_TTL_KEY = os.environ.get('BACKUP_TTL_KEY', 'mysql-backup-run')
 LAST_BACKUP_KEY = os.environ.get('LAST_BACKUP_KEY', 'mysql-last-backup')
 LAST_BINLOG_KEY = os.environ.get('LAST_BINLOG_KEY', 'mysql-last-binlog')
-BACKUP_TTL_KEY = os.environ.get('BACKUP_TTL_KEY', 'mysql-backup-run')
 BACKUP_NAME = os.environ.get('BACKUP_NAME', 'mysql-backup')
 BACKUP_TTL = '{}s'.format(os.environ.get('BACKUP_TTL', 86400)) # every 24 hours
 
@@ -631,7 +630,7 @@ def is_time_for_snapshot():
     """ Check if it's time to do a snapshot """
     log.debug('is_time_for_snapshot')
     try:
-        check = consul.agent.checks()[BACKUP_ID_KEY]
+        check = consul.agent.checks()[BACKUP_TTL_KEY]
         log.debug(check)
         if check['Status'] == 'passing':
             return False
@@ -648,7 +647,7 @@ def write_snapshot(conn):
 
     # we don't want .isoformat() here because of URL encoding
     now = datetime.utcnow().strftime('%Y-%m-%dT%H-%M-%SZ')
-    backup_id = '{}-{}'.format(BACKUP_ID_KEY, now)
+    backup_id = '{}-{}'.format(BACKUP_NAME, now)
     set_backup_ttl()
 
     if create_snapshot(backup_id):
@@ -684,18 +683,18 @@ def set_backup_ttl():
     log.debug('set_backup_ttl')
     log.debug(BACKUP_TTL_KEY)
     try:
-        pass_check = consul.agent.check.ttl_pass(BACKUP_SERVICE_NAME)
+        pass_check = consul.agent.check.ttl_pass(BACKUP_TTL_KEY)
         log.debug(pass_check)
         if not pass_check:
             log.debug('no pass_check!')
-            consul.agent.check.register(name=BACKUP_SERVICE_NAME,
+            consul.agent.check.register(name=BACKUP_TTL_KEY,
                                         check=pyconsul.Check.ttl(BACKUP_TTL),
-                                        check_id=BACKUP_SERVICE_NAME)
-            pass_check = consul.agent.check.ttl_pass(BACKUP_SERVICE_NAME)
+                                        check_id=BACKUP_TTL_KEY)
+            pass_check = consul.agent.check.ttl_pass(BACKUP_TTL_KEY)
             log.debug(pass_check)
             if not pass_check:
                 raise Exception('Could not register health check for {}'
-                                .format(BACKUP_SERVICE_NAME))
+                                .format(BACKUP_TTL_KEY))
     except Exception as ex:
         log.exception(ex)
 
