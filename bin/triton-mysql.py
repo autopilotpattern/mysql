@@ -45,11 +45,15 @@ REPLICA = 'mysql'
 USE_STANDBY = os.environ.get('USE_STANDBY', False)
 
 # consts for keys
+PRIMARY_KEY = os.environ.get('PRIMARY_KEY', 'mysql-primary')
+STANDBY_KEY = os.environ.get('STANDBY_KEY', 'mysql-standby')
 BACKUP_TTL_KEY = os.environ.get('BACKUP_TTL_KEY', 'mysql-backup-run')
 LAST_BACKUP_KEY = os.environ.get('LAST_BACKUP_KEY', 'mysql-last-backup')
 LAST_BINLOG_KEY = os.environ.get('LAST_BINLOG_KEY', 'mysql-last-binlog')
 BACKUP_NAME = os.environ.get('BACKUP_NAME', 'mysql-backup')
 BACKUP_TTL = '{}s'.format(os.environ.get('BACKUP_TTL', 86400)) # every 24 hours
+SESSION_CACHE_FILE = os.environ.get('SESSION_CACHE_FILE', '/tmp/mysql-session')
+SESSION_NAME = os.environ.get('SESSION_NAME', 'mysql-primary-lock')
 
 # ---------------------------------------------------------
 
@@ -78,6 +82,9 @@ class MySQLNode(object):
 
     def is_primary(self):
         return self.state == PRIMARY
+
+    def is_standby(self):
+        return self.state == STANDBY
 
     def is_snapshot_node(self):
         if USE_STANDBY:
@@ -266,6 +273,19 @@ def health():
                    timeout=cb.config['services'][0]['ttl'])
         node.conn = wait_for_connection(**ctx)
 
+        # Update our lock on being the primary/standby.
+        # If this lock is allowed to expire and the health check for the primary
+        # fails, the `onChange` handlers for the replicas will try to self-elect
+        # as primary by obtaining the lock.
+        # If this node can update the lock but the DB fails its health check,
+        # then the operator will need to manually intervene if they want to
+        # force a failover. This architecture is a result of Consul not
+        # permitting us to acquire a new lock on a health-checked session if the
+        # health check is *currently* failing, but has the happy side-effect of
+        # reducing the risk of flapping on a transient health check failure.
+        if node.is_primary() or node.is_standby():
+            update_session_ttl()
+
         if (node.is_snapshot_node() and
                 (is_binlog_stale(node.conn) or is_time_for_snapshot())):
             try:
@@ -284,15 +304,30 @@ def health():
         sys.exit(1)
 
 
-# TODO: this will be where we hook-in failover behaviors
 def on_change():
     log.debug('on_change check fired.')
     try:
         node = MySQLNode()
         cb = Containerbuddy(node)
-        if cb.update():
-            cb.reload()
-        sys.exit(0)
+
+        ctx = dict(user=config.repl_user,
+                   password=config.repl_password,
+                   database=config.mysql_db,
+                   timeout=cb.config['services'][0]['ttl'])
+        node.conn = wait_for_connection(**ctx)
+
+        # need to stop replication whether we're the new primary or not
+        stop_replication(node.conn)
+        primary = get_primary_node()
+        if not primary:
+            session_id = get_session()
+            if mark_with_session(PRIMARY_KEY, node.hostname, session_id):
+                return
+
+        # if the primary node is set or we failed to elect ourselves
+        # then we're going to point ourselves to the new primary
+        set_primary_for_replica(node.conn)
+
     except Exception as ex:
         log.exception(ex)
         sys.exit(1)
@@ -361,9 +396,9 @@ def _run_replica(node):
             initialize_db()
 
         node.temp_pid = start_temp_db(gtid_on=True)
-        ctx = dict(user=config.repl_user,  # 'root',
-                   password=config.repl_password, # .mysql_root_password,
-                   database=config.mysql_db) #, timeout=1000000) # DEBUG
+        ctx = dict(user=config.repl_user,
+                   password=config.repl_password,
+                   database=config.mysql_db)
         node.conn = wait_for_connection(**ctx)
         set_primary_for_replica(node.conn)
     except Exception as ex:
@@ -420,22 +455,22 @@ def wait_for_connection(user='root', password=None, database=None, timeout=30):
                 raise
             time.sleep(1)
 
-def mark_with_cas(key, val, timeout=10):
+def mark_with_session(key, val, session_id, timeout=10):
     while timeout > 0:
         try:
-            return consul.kv.put(key, val, cas=0)
+            return consul.kv.put(key, val, acquire=session_id)
         except Exception:
             timeout = timeout - 1
             time.sleep(1)
     raise Exception('Could not reach Consul.')
-
 
 # ---------------------------------------------------------
 # functions to support initialization
 
 def mark_as_primary(node):
     """ Write flag to Consul to mark this node as primary """
-    if not mark_with_cas('mysql-primary', node.hostname):
+    session_id = get_session()
+    if not mark_with_session(PRIMARY_KEY, node.hostname, session_id):
         log.error('Tried to mark node primary but primary exists, '
                   'restarting bootstrap process.')
         on_start()
@@ -580,7 +615,8 @@ def run_external_scripts(path):
 # functions to support replication
 
 def mark_as_standby(node):
-    if not mark_with_cas('mysql-standby', node.hostname):
+    session_id = get_session()
+    if not mark_with_session(STANDBY_KEY, node.hostname, session_id):
         log.error('Tried to mark node standby but standby exists, '
                   'restarting bootstrap process.')
         on_start()
@@ -588,6 +624,42 @@ def mark_as_standby(node):
 
 def stop_replication(conn):
     mysql_exec(conn, 'STOP SLAVE', ())
+
+
+def get_session(no_cache=False):
+    """
+    Gets a Consul session ID from the on-disk cache or calls into
+    `create_session` to generate and cache a new one.
+    """
+    if no_cache:
+        return create_session()
+    try:
+        with open(SESSION_CACHE_FILE, 'r') as f:
+            session_id = f.read()
+    except IOError:
+        session_id = create_session()
+    return session_id
+
+def create_session(ttl=60):
+    """
+    We can't rely on storing Consul session IDs in memory because
+    `health` and `onChange` handler calls happen in a subsequent
+    process. Here we creates a session on Consul and cache the
+    session ID to disk. Returns the session ID.
+    """
+    session_id = consul.session.create(name=SESSION_NAME,
+                                       behavior='release',
+                                       ttl=ttl)
+    with open(SESSION_CACHE_FILE, 'w') as f:
+        f.write(session_id)
+    return session_id
+
+def update_session_ttl(session_id=None):
+    """ Renews the session TTL on Consul """
+    if not session_id:
+        session_id = get_session()
+    consul.session.renew(session_id)
+
 
 def has_snapshot():
     """ Ask Consul for 'last backup' key """
@@ -727,11 +799,13 @@ def get_primary_host(timeout=30):
     raises an exception.
     """
     primary = get_primary_node()
+    if not primary:
+        raise Exception('Tried replication setup but could not find primary.')
     log.debug('Checking if primary (%s) is healthy...', primary)
 
     while timeout > 0:
         try:
-            nodes = consul.catalog.service('mysql-primary')[1]
+            nodes = consul.catalog.service(PRIMARY_KEY)[1]
             ips = [service['ServiceAddress'] for service in nodes
                    if service['ServiceID'].endswith(primary)]
             return ips[0]
@@ -748,7 +822,12 @@ def get_primary_host(timeout=30):
 def get_primary_node(timeout=10):
     while timeout > 0:
         try:
-            return get_from_consul('mysql-primary')
+            result = consul.kv.get(PRIMARY_KEY)
+            if result[1]:
+                if result[1].get('Session', False):
+                    return result[1]['Value']
+            # either there is no primary or the session has expired
+            return None
         except Exception as ex:
             timeout = timeout - 1
             time.sleep(1)
@@ -758,7 +837,12 @@ def get_primary_node(timeout=10):
 def get_standby_node(timeout=10):
     while timeout > 0:
         try:
-            return get_from_consul('mysql-standby')
+            result = consul.kv.get(STANDBY_KEY)
+            if result[1]:
+                if result[1].get('Session', False):
+                    return result[1]['Value']
+            # either there is no standby or the session has expired
+            return None
         except Exception as ex:
             timeout = timeout - 1
             time.sleep(1)

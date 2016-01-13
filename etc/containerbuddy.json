@@ -12,7 +12,7 @@
   ],
   "backends": [
     {
-      "name": "mysql",
+      "name": "mysql-primary",
       "poll": 10,
       "onChange": "python /bin/triton-mysql.py on_change"
     }

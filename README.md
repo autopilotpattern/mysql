@@ -30,9 +30,7 @@ If the node is primary, the handler will ask Consul if the TTL key for backups h
 
 ### Failover via `onChange` handler
 
-*(Note: this is all TODO and the lock semantic won't quite work like this the way the code is now)*
-
-The Containerbuddy configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, the `onChange` handler will fire and call into `triton-mysql.py`. Replicas will all attempt to become the new primary by writing a lock into Consul w/ CAS. Only one replica will receive the lock and become the new primary. The new primary will reload its configuration to start writing its heartbeats as primary, while the other replicas will update their replication configuration to start replicating from the new primary.
+The Containerbuddy configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, the `onChange` handler will fire and call into `triton-mysql.py`. Replicas will all attempt to become the new primary by writing a lock into Consul. Only one replica will receive the lock and become the new primary. The new primary will reload its configuration to start writing its heartbeats as primary, while the other replicas will update their replication configuration to start replicating from the new primary.
 
 
 ### Zero downtime promotion of replica to primary
@@ -79,11 +77,15 @@ These variables are optional but you most likely want them:
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
 
+- `PRIMARY_KEY`: The key used to record a lock on what node is primary. (Defaults to `mysql-primary`.)
+- `STANDBY_KEY`: The key used to record a lock on what node is standby. (Defaults to `mysql-standby`.)
 - `BACKUP_TTL_KEY`: The name of the service that the backup TTL will be associated with. (Defaults to `mysql-backup-run`.)
 - `LAST_BACKUP_KEY`: The key used to store the path to the most recent backup. (Defaults to `mysql-last-backup`.)
 - `LAST_BINLOG_KEY`: The key used to store the filename of the most recent binlog file on the primary. (Defaults to `mysql-last-binlog`.)
 - `BACKUP_NAME`: Prefix for the file that's stored on Manta. (Defaults to `mysql-backup`.)
 - `BACKUP_TTL`: Time in seconds to wait between backups. (Defaults to `86400`, or 24 hours.)
+- `SESSION_CACHE_FILE`: The path to the on-disk cache of the Consul session ID for each node. (Defaults to `/tmp/mysql-session`.)
+- `SESSION_NAME`: The name used for session locks. (Defaults to `mysql-primary-lock`.)
 
 These variables *may* be passed but it's not recommended to do this. Instead we'll set a one-time root password during DB initialization; the password will be dropped into the logs.
 
