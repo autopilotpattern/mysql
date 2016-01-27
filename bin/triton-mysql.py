@@ -233,7 +233,7 @@ class Containerbuddy(object):
         os.kill(1, signal.SIGHUP)
 
 # ---------------------------------------------------------
-# Top-level functions called by Containerbuddy
+# Top-level functions called by Containerbuddy or forked by this program
 
 def on_start():
     """
@@ -331,6 +331,38 @@ def on_change():
     except Exception as ex:
         log.exception(ex)
         sys.exit(1)
+
+
+def create_snapshot():
+    log.debug('create_snapshot')
+
+    # we don't want .isoformat() here because of URL encoding
+    now = datetime.utcnow().strftime('%Y-%m-%dT%H-%M-%SZ')
+    backup_id = '{}-{}'.format(BACKUP_NAME, now)
+
+    with open('/tmp/backup.tar', 'w') as f:
+        subprocess.check_call(['/usr/bin/innobackupex',
+                               '--user={}'.format(config.repl_user),
+                               '--password={}'.format(config.repl_password),
+                               '--no-timestamp',
+                               #'--compress',
+                               '--stream=tar',
+                               '/tmp/backup'], stdout=f)
+
+    manta_config.put_backup(backup_id, '/tmp/backup.tar')
+    consul.kv.put(LAST_BACKUP_KEY, backup_id)
+
+    ctx = dict(user=config.repl_user,
+               password=config.repl_password,
+               database=config.mysql_db)
+    conn = wait_for_connection(**ctx)
+
+    # write the filename of the binlog to Consul so that we know if
+    # we've rotated since the last backup.
+    # query lets IndexError bubble up -- something's broken
+    results = mysql_query(conn, 'SHOW MASTER STATUS', ())
+    binlog_file = results[0][0]
+    consul.kv.put(LAST_BINLOG_KEY, binlog_file)
 
 
 # ---------------------------------------------------------
@@ -717,35 +749,13 @@ def write_snapshot(conn):
     """
     log.debug('write_snapshot')
 
-    # we don't want .isoformat() here because of URL encoding
-    now = datetime.utcnow().strftime('%Y-%m-%dT%H-%M-%SZ')
-    backup_id = '{}-{}'.format(BACKUP_NAME, now)
+
+    # we set the BACKUP_TTL before we run the backup so that we don't
+    # have multiple health checks running concurrently. We then fork the
+    # create_snapshot call and return. The snapshot process will be
+    # re-parented to Containerbuddy
     set_backup_ttl()
-
-    if create_snapshot(backup_id):
-        consul.kv.put(LAST_BACKUP_KEY, backup_id)
-
-        # write the filename of the binlog to Consul so that we know if
-        # we've rotated since the last backup.
-        # query lets IndexError bubble up -- something's broken
-        results = mysql_query(conn, 'SHOW MASTER STATUS', ())
-        binlog_file = results[0][0]
-        consul.kv.put(LAST_BINLOG_KEY, binlog_file)
-
-
-def create_snapshot(backup_id):
-    log.debug('create_snapshot')
-    with open('/tmp/backup.tar', 'w') as f:
-        subprocess.check_call(['/usr/bin/innobackupex',
-                               '--user={}'.format(config.repl_user),
-                               '--password={}'.format(config.repl_password),
-                               '--no-timestamp',
-                               #'--compress',
-                               '--stream=tar',
-                               '/tmp/backup'], stdout=f)
-
-    manta_config.put_backup(backup_id, '/tmp/backup.tar')
-    return True
+    subprocess.Popen(['python', '/bin/triton-mysql.py', 'create_snapshot'])
 
 def set_backup_ttl():
     """

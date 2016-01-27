@@ -70,6 +70,7 @@ These variables are optional but you most likely want them:
 - `MANTA_SUBUSER`: the Manta subuser account name, if any.
 - `MANTA_ROLE`: the Manta role name, if any.
 - `MANTA_KEY_ID`: the MD5-format ssh key id for the Manta account/subuser (ex. `1a:b8:30:2e:57:ce:59:1d:16:f6:19:97:f2:60:2b:3d`).
+- `MANTA_PRIVATE_KEY`: the private ssh key for the Manta account/subuser.
 - `MANTA_BUCKET`: the path on Manta where backups will be stored. (ex. `/myaccount/stor/triton-mysql`)
 - `LOG_LEVEL`: will set the logging level of the `triton-mysql.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels).
 - `CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
