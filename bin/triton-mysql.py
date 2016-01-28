@@ -32,7 +32,7 @@ manta_logger.setLevel(logging.INFO)
 
 log = logging.getLogger('triton-mysql')
 
-consul = pyconsul.Consul(host=os.environ.get('CONSUL', 'consul'))
+consul = pyconsul.Consul(host=os.environ.get('TRITON_MYSQL_CONSUL', 'consul'))
 config = None
 
 # consts for node state

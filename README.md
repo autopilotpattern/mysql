@@ -55,7 +55,7 @@ So long as we're working with a new cluster that has never rotated the binlog on
 
 ### Configuration
 
-Pass these variables in your environment or via an `.env` file.
+Pass these variables in your environment or via an `_env` file.
 
 - `MYSQL_USER`: this user will be set up as the default non-root user on the node
 - `MYSQL_PASSWORD`: this user will be set up as the default non-root user on the node
@@ -73,7 +73,7 @@ These variables are optional but you most likely want them:
 - `MANTA_PRIVATE_KEY`: the private ssh key for the Manta account/subuser.
 - `MANTA_BUCKET`: the path on Manta where backups will be stored. (ex. `/myaccount/stor/triton-mysql`)
 - `LOG_LEVEL`: will set the logging level of the `triton-mysql.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels).
-- `CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
+- `TRITON_MYSQL_CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
 - `USE_STANDBY` tells the `triton-mysql.py` application to use a separate standby MySQL node to run backups. This might be useful if you have a very high write throughput on the primary node. Defaults to `no` (turn on with `yes` or `on`).
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:

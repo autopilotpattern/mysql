@@ -2,7 +2,7 @@
 *.pyc
 
 # credentials
-.env
+_env*
 manta
 manta.pub
 

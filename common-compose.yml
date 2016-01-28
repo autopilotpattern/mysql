@@ -1,14 +1,12 @@
 # MySQL designed for container-native deployment on Joyent's Triton platform.
 
 mysql:
-    image: 0x74696d/mysql:latest
+    image: 0x74696d/triton-mysql:latest
     mem_limit: 4g
     restart: always
-    env_file: .env
+    env_file: _env
     environment:
       - CONTAINERBUDDY=file:///etc/containerbuddy.json
-    # - MYSQL_RANDOM_ROOT_PASSWORD=yes
-    # - MYSQL_ONETIME_PASSWORD=yes # not sure about this yet
       - MANTA_PRIVATE_KEY
 
     # expose for linking, but each container gets a private IP for

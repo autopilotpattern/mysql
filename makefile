@@ -9,11 +9,6 @@ build:
 ship:
 	docker push 0x74696d/triton-mysql
 
-# run a 3-data-node cluster on Triton
-run:
-	docker-compose -p my up -d
-	docker-compose -p my scale mysql=3
-
 # -------------------------------------------------------
 # for testing against Docker locally
 
@@ -30,12 +25,12 @@ cleanup:
 	mchmod -- +triton_mysql /${SDC_ACCOUNT}/stor/triton-mysql
 
 test: stop-local build-local
-	MANTA_PRIVATE_KEY=`cat manta` docker-compose -p my -f local-compose.yml up -d
+	docker-compose -p my -f local-compose.yml up -d
 	docker ps
 	docker logs -f my_mysql_1
 
 replica:
-	MANTA_PRIVATE_KEY=`cat manta` docker-compose -p my -f local-compose.yml scale mysql=2
+	docker-compose -p my -f local-compose.yml scale mysql=3
 	docker ps
 	docker logs -f my_mysql_2
 
