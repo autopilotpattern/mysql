@@ -13,10 +13,8 @@ from requests.exceptions import ConnectionError
 consul = pyconsul.Consul(host='192.168.99.100') #os.environ.get('CONSUL', 'consul'))
 
 # tuple to define a border style where only the top border is in use
-TOP_BORDER=(' ', ' ', 0, ' ', ' ', ' ', ' ', ' ')
+TOP_BORDER = (' ', ' ', 0, ' ', ' ', ' ', ' ', ' ')
 DEBUG = os.environ.get('DEBUG', False)
-
-
 
 class Pane(object):
 
@@ -24,7 +22,7 @@ class Pane(object):
 
     def __init__(self, screen, name='', y=0, nlines=5, ncols=80):
         self.screen = screen
-        self.outer =  screen.subwin(nlines, ncols, y, 1)
+        self.outer = screen.subwin(nlines, ncols, y, 1)
         self.outer.border(*TOP_BORDER)
         if name:
             self.name = name
@@ -39,7 +37,17 @@ class Pane(object):
     def paint(self):
         self.outer.refresh()
         last_fetch = self.fetch()
-        self.subwin.addstr(0,0,last_fetch)
+        self.subwin.clear()
+        for y, line in enumerate(last_fetch.splitlines()):
+            # hacky way of coloring the lines based on content
+            if 'passing' in line:
+                self.subwin.addstr(y, 0, line, curses.color_pair(curses.COLOR_GREEN))
+            elif 'critical' in line:
+                self.subwin.addstr(y, 0, line, curses.color_pair(curses.COLOR_RED))
+            elif 'unknown' in line:
+                self.subwin.addstr(y, 0, line, curses.color_pair(curses.COLOR_YELLOW))
+            else:
+                self.subwin.addstr(y, 0, line)
         if DEBUG:
             # This indicator can be used to verify we're running during
             # testing & development if there aren't a lot of changes.
@@ -64,63 +72,80 @@ class ConsulPane(Pane):
     name = 'Consul'
 
     def fetch(self):
-
         try:
-            try:
-                primary_node = consul.catalog.service('mysql-primary')[1]
-                primary_name = primary_node[0]['ServiceID'].replace('mysql-primary-', '')
-                primary_ip = primary_node[0]['Address']
-                primary_port = primary_node[0]['ServicePort']
-                out = 'Primary \t{}\t{}:{}\thealthy\n'.format(
-                    primary_name, primary_ip, primary_port)
-            except (IndexError, TypeError):
-                out = 'Primary\n'
-
-            # get information about the replicas and append it to the output
-            try:
-                replicas = []
-                for replica in consul.catalog.service('mysql')[1]:
-                    name = replica['ServiceID'].replace('mysql-', '')
-                    ip = replica['Address']
-                    port = replica['ServicePort']
-                    replicas.append('\t{}\t{}:{}\thealthy'.format(name, ip, port))
-                replicas_out = '\n\t'.join(replicas)
-            except (IndexError, TypeError):
-                replicas_out = ''
-            out = out + 'Replicas' + replicas_out + '\n'
-
-            # get information about the session lock we have for the primary
-            try:
-                lock_val = consul.kv.get('mysql-primary')[1]
-                lock_host = lock_val['Value']
-                lock_session_id = lock_val['Session']
-                lock_ttl = consul.session.info(lock_session_id)[1]['TTL']
-                lock = 'Lock\t\t{} by {} with TTL {}\n'.format(
-                    lock_session_id, lock_host, lock_ttl)
-            except (IndexError, TypeError):
-                lock = 'Lock\n'
-            out = out + lock
-
-            try:
-                last_backup = 'Last Backup\t{}\n'.format(
-                    consul.kv.get('mysql-last-backup')[1]['Value']\
-                    .replace('mysql-backup-', ''))
-            except (IndexError, TypeError):
-                last_backup = 'Last Backup\n'
-            out = out + last_backup
-
-            try:
-                last_binlog = 'Last Binlog\t{}\n'.format(
-                    consul.kv.get('mysql-last-binlog')[1]['Value'])
-            except (IndexError, TypeError):
-                last_binlog = 'Last Binlog'
-            out = out + last_binlog
-
+            out = self._fetch_primary()
+            out = out + 'Replicas' + self._fetch_replicas() + '\n'
+            out = out + self._fetch_lock()
+            out = out + self._fetch_last_backup()
+            out = out + self._fetch_last_binlog()
             return out
         except (ConnectionError, pyconsul.ConsulException):
             return ''
         except Exception as ex:
             return ex.message
+
+    def _fetch_primary(self):
+        try:
+            primary_node = consul.catalog.service('mysql-primary')[1][0]
+            primary_name = primary_node['ServiceID'].replace('mysql-primary-', '')
+            primary_ip = primary_node['Address']
+            primary_port = primary_node['ServicePort']
+            try:
+                primary_health = consul.health.checks('mysql-primary')[1][0]['Status']
+            except (IndexError, TypeError):
+                primary_health = 'unknown'
+
+            out = 'Primary \t{}\t{}:{}\t\t{}\n'.format(
+                primary_name, primary_ip, primary_port, primary_health)
+        except (IndexError, TypeError):
+            out = 'Primary\n'
+        return out
+
+    def _fetch_replicas(self):
+        """ get information about the replicas and append it to the output """
+        try:
+            replica_nodes = consul.catalog.service('mysql')[1]
+            replica_health = {n['Name']: n['Status']
+                              for n in consul.health.checks('mysql')[1]}
+            replicas = []
+            for replica in replica_nodes:
+                service_id = replica['ServiceID']
+                name = service_id.replace('mysql-', '')
+                ip = replica['Address']
+                port = replica['ServicePort']
+                health = replica_health.get(service_id, 'unknown')
+                replicas.append('\t{}\t{}:{}\t\t{}'.format(name, ip, port, health))
+            return '\n\t'.join(replicas)
+
+        except IndexError:
+            return ''
+
+    def _fetch_lock(self):
+        """ Get information about the session lock we have for the primary"""
+        try:
+            lock_val = consul.kv.get('mysql-primary')[1]
+            lock_host = lock_val['Value']
+            lock_session_id = lock_val['Session']
+            lock_ttl = consul.session.info(lock_session_id)[1]['TTL']
+            return '\nLock\t\t{} for TTL {} [ID:{}]\n'.format(
+                lock_host, lock_ttl, lock_session_id)
+        except (IndexError, TypeError):
+            return 'Lock\n'
+
+    def _fetch_last_backup(self):
+        try:
+            return 'Last Backup\t{}\n'.format(
+                consul.kv.get('mysql-last-backup')[1]['Value']\
+                .replace('mysql-backup-', ''))
+        except (IndexError, TypeError):
+            return 'Last Backup\n'
+
+    def _fetch_last_binlog(self):
+        try:
+            return 'Last Binlog\t{}\n'.format(
+                consul.kv.get('mysql-last-binlog')[1]['Value'])
+        except (IndexError, TypeError):
+            return 'Last Binlog'
 
 
 
@@ -140,7 +165,6 @@ class LogsPane(Pane):
                                          stdout=self.writer,
                                          stderr=self.writer)
         except Exception:
-            raise
             self.proc = None
             self.writer.close()
 
@@ -171,19 +195,24 @@ class LogsPane(Pane):
         self.outer.refresh()
 
 
+
 def main(*args, **kwargs):
     try:
         screen = curses.initscr()
-        maxy, maxx = screen.getmaxyx()
+        curses.start_color()
+        curses.use_default_colors()
+        for i in range(0, curses.COLORS):
+            curses.init_pair(i, i, -1)
+        _, maxx = screen.getmaxyx()
         curses.curs_set(0)
         screen.clear()
         screen.refresh()
         elements = (
             DockerPane(screen, y=0, nlines=9, ncols=maxx-1),
-            ConsulPane(screen, y=9, nlines=9, ncols=maxx-1),
-            LogsPane(screen, name='my_mysql_1', y=19, nlines=8, ncols=maxx-1),
-            LogsPane(screen, name='my_mysql_2', y=28, nlines=8, ncols=maxx-1),
-            LogsPane(screen, name='my_mysql_3', y=36, nlines=8, ncols=maxx-1)
+            ConsulPane(screen, y=9, nlines=10, ncols=maxx-1),
+            LogsPane(screen, name='my_mysql_1', y=20, nlines=8, ncols=maxx-1),
+            LogsPane(screen, name='my_mysql_2', y=29, nlines=8, ncols=maxx-1),
+            LogsPane(screen, name='my_mysql_3', y=37, nlines=8, ncols=maxx-1)
         )
         while True:
             for element in elements:
