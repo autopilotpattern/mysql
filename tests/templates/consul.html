@@ -1,0 +1,34 @@
+<div class="row">
+  <div class="column column-20"><strong>Primary:</strong></div>
+  {% if consul.primary %}
+  <div class="column column-25">{{ consul.primary.name }}</div>
+  <div class="column">{{ consul.primary.ip}}:{{consul.primary.port}}</div>
+  <div class="column">{{ consul.primary.health }}</div>
+  {% endif %}
+</div>
+
+{% for replica in consul.replicas %}
+<div class="row">
+  <div class="column column-20">{% if loop.first %}<strong>Replicas:</strong>{% endif %}</div>
+  <div class="column column-25">{{ replica.name }}</div>
+  <div class="column">{{ replica.ip}}:{{replica.port}}</div>
+  <div class="column">{{ replica.health }}</div>
+</div>
+{% endfor %}
+<div class="row">&nbsp;</div> <!-- wee, hacky crap -->
+
+<div class="row">
+  <div class="column column-20"><strong>Lock:</strong></div>
+  {% if consul.lock %}
+  <div class="column column-25">{{ consul.lock.host }}</div>
+  <div class="column">{{ consul.lock.lock_session_id }} w/ TTL: {{ consul.lock.ttl }}</div>
+  {% endif %}
+</div>
+<div class="row">
+  <div class="column column-20"><strong>Last Backup:</strong></div>
+  <div class="column column-25">{{ consul.last_backup }}</div>
+</div>
+<div class="row">
+  <div class="column column-20"><strong>Last Binlog:</strong></div>
+  <div class="column column-25">{{ consul.last_binlog }}</div>
+</div>

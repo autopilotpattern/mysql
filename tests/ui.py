@@ -1,112 +1,126 @@
 from __future__ import print_function
-import curses
-import io
-from itertools import cycle
+import datetime as dt
+import json
 import os
-import signal
 import subprocess
-import traceback
+import time
 
 import consul as pyconsul
 from requests.exceptions import ConnectionError
 
-consul = pyconsul.Consul(host='192.168.99.100') #os.environ.get('CONSUL', 'consul'))
+from flask import Flask, render_template
+app = Flask(__name__)
 
-# tuple to define a border style where only the top border is in use
-TOP_BORDER = (' ', ' ', 0, ' ', ' ', ' ', ' ', ' ')
-DEBUG = os.environ.get('DEBUG', False)
 
 class Pane(object):
 
-    name = ''
-
-    def __init__(self, screen, name='', y=0, nlines=5, ncols=80):
-        self.screen = screen
-        self.outer = screen.subwin(nlines, ncols, y, 1)
-        self.outer.border(*TOP_BORDER)
-        if name:
-            self.name = name
-        self.outer.addstr(0, 0, self.name + ' ')
-        self.subwin = self.outer.subwin(nlines - 2, ncols - 2, y + 2, 2)
-        self.subwin.scrollok(True)
-        self.progress = cycle(['\\', '|', '/', '-', '\\', '|', '-'])
+    def __init__(self, name=''):
+        self.name = name
+        self.last_timestamp = None
 
     def fetch(self):
         raise NotImplementedError()
 
-    def paint(self):
-        self.outer.refresh()
-        last_fetch = self.fetch()
-        self.subwin.clear()
-        for y, line in enumerate(last_fetch.splitlines()):
-            # hacky way of coloring the lines based on content
-            if 'passing' in line:
-                self.subwin.addstr(y, 0, line, curses.color_pair(curses.COLOR_GREEN))
-            elif 'critical' in line:
-                self.subwin.addstr(y, 0, line, curses.color_pair(curses.COLOR_RED))
-            elif 'unknown' in line:
-                self.subwin.addstr(y, 0, line, curses.color_pair(curses.COLOR_YELLOW))
-            else:
-                self.subwin.addstr(y, 0, line)
-        if DEBUG:
-            # This indicator can be used to verify we're running during
-            # testing & development if there aren't a lot of changes.
-            _, x = self.subwin.getmaxyx()
-            self.subwin.addstr(0, x-2, '{}'.format(self.progress.next()))
-
-        self.subwin.refresh()
-
 class DockerPane(Pane):
 
-    name = 'Docker'
-
     def fetch(self):
-        output = subprocess.check_output([
-            'docker', 'ps',
-            "--format='table {{.ID}}\\t{{.Names}}\\t{{.Command}}\\tUp {{.RunningFor}}'"])
-        return output
+        """ Use the Docker client to run `docker ps` and returns a list """
+        try:
+            output = subprocess.check_output([
+                'docker', 'ps',
+                "--format='table {{.ID}};{{.Names}};{{.Command}};{{.RunningFor}}'"])
+            out = []
+        except subprocess.CalledProcessError:
+            return {}
+
+        for line in output.splitlines()[1:]:
+            fields = line.split(';')
+            out.append({
+                "id": fields[0],
+                "name": fields[1],
+                "command": fields[2],
+                "uptime": fields[3],
+            })
+        return out
 
 
 class ConsulPane(Pane):
 
-    name = 'Consul'
+    _consul = None
+
+    @property
+    def consul(self):
+        if self._consul:
+            return self._consul
+
+        docker = os.environ['DOCKER_HOST'] # let this crash if not defined
+        docker = docker.replace('tcp://', '').replace(':2376','')
+        if '192.' in docker:
+            docker_host = docker
+        else:
+            try:
+                output = subprocess.check_output([
+                    'docker', 'inspect', 'my_consul_1'
+                ])
+                data = json.loads(output)
+                docker_host = data[0]['NetworkSettings']['IPAddress']
+            except (subprocess.CalledProcessError, KeyError):
+                return None
+
+        if docker_host:
+            self._consul = pyconsul.Consul(host=docker_host)
+        return self._consul
+
 
     def fetch(self):
+        """
+        Makes queries to Consul about the health of the mysql instances
+        and status of locks/backups used for coordination.
+        """
         try:
-            out = self._fetch_primary()
-            out = out + 'Replicas' + self._fetch_replicas() + '\n'
-            out = out + self._fetch_lock()
-            out = out + self._fetch_last_backup()
-            out = out + self._fetch_last_binlog()
-            return out
+            if not self.consul:
+                raise Exception("No Consul container running.")
+            return {
+                "primary": self._fetch_primary(),
+                "replicas": self._fetch_replicas(),
+                "lock": self._fetch_lock(),
+                "last_backup": self._fetch_last_backup(),
+                "last_binlog": self._fetch_last_binlog()
+            }
         except (ConnectionError, pyconsul.ConsulException):
-            return ''
+            return {"error": "Could not connect to Consul"}
         except Exception as ex:
-            return ex.message
+            return {"error": ex.message}
 
     def _fetch_primary(self):
+        """ Get status of the primary """
         try:
-            primary_node = consul.catalog.service('mysql-primary')[1][0]
+            primary_node = self.consul.catalog.service('mysql-primary')[1][0]
             primary_name = primary_node['ServiceID'].replace('mysql-primary-', '')
             primary_ip = primary_node['Address']
             primary_port = primary_node['ServicePort']
             try:
-                primary_health = consul.health.checks('mysql-primary')[1][0]['Status']
+                primary_health = self.consul.health.checks('mysql-primary')[1][0]['Status']
             except (IndexError, TypeError):
                 primary_health = 'unknown'
 
-            out = 'Primary \t{}\t{}:{}\t\t{}\n'.format(
-                primary_name, primary_ip, primary_port, primary_health)
+            return {
+                "name": primary_name,
+                "ip": primary_ip,
+                "port": primary_port,
+                "health": primary_health
+            }
+
         except (IndexError, TypeError):
-            out = 'Primary\n'
+            out = {}
         return out
 
     def _fetch_replicas(self):
-        """ get information about the replicas and append it to the output """
+        """ Get status of the replicas """
         try:
-            replica_nodes = consul.catalog.service('mysql')[1]
+            replica_nodes = self.consul.catalog.service('mysql')[1]
             replica_health = {n['Name']: n['Status']
-                              for n in consul.health.checks('mysql')[1]}
+                              for n in self.consul.health.checks('mysql')[1]}
             replicas = []
             for replica in replica_nodes:
                 service_id = replica['ServiceID']
@@ -114,39 +128,43 @@ class ConsulPane(Pane):
                 ip = replica['Address']
                 port = replica['ServicePort']
                 health = replica_health.get(service_id, 'unknown')
-                replicas.append('\t{}\t{}:{}\t\t{}'.format(name, ip, port, health))
-            return '\n\t'.join(replicas)
-
+                replicas.append({
+                    "name": name,
+                    "ip": ip,
+                    "port": port,
+                    "health": health
+                })
+            return replicas
         except IndexError:
-            return ''
+            return []
 
     def _fetch_lock(self):
         """ Get information about the session lock we have for the primary"""
         try:
-            lock_val = consul.kv.get('mysql-primary')[1]
+            lock_val = self.consul.kv.get('mysql-primary')[1]
             lock_host = lock_val['Value']
             lock_session_id = lock_val['Session']
-            lock_ttl = consul.session.info(lock_session_id)[1]['TTL']
-            return '\nLock\t\t{} for TTL {} [ID:{}]\n'.format(
-                lock_host, lock_ttl, lock_session_id)
-        except (IndexError, TypeError):
-            return 'Lock\n'
+            lock_ttl = self.consul.session.info(lock_session_id)[1]['TTL']
+            return {
+                "host": lock_host,
+                "ttl": lock_ttl,
+                "lock_session_id": lock_session_id
+            }
+        except:
+            return {}
 
     def _fetch_last_backup(self):
         try:
-            return 'Last Backup\t{}\n'.format(
-                consul.kv.get('mysql-last-backup')[1]['Value']\
-                .replace('mysql-backup-', ''))
+            return self.consul.kv.get('mysql-last-backup')[1]['Value']\
+                            .replace('mysql-backup-', '')
         except (IndexError, TypeError):
-            return 'Last Backup\n'
+            return ''
 
     def _fetch_last_binlog(self):
         try:
-            return 'Last Binlog\t{}\n'.format(
-                consul.kv.get('mysql-last-binlog')[1]['Value'])
+            return self.consul.kv.get('mysql-last-binlog')[1]['Value']
         except (IndexError, TypeError):
-            return 'Last Binlog'
-
+            return ''
 
 
 class LogsPane(Pane):
@@ -156,72 +174,61 @@ class LogsPane(Pane):
     processes left over.
     """
     def fetch(self):
+
+        args = ['docker', 'logs', '-t']
+        if self.last_timestamp:
+            args.extend(['--since', self.last_timestamp])
+        args.append(self.name)
+
         try:
-            fname = '/tmp/mysql-{}'.format(self.name)
-            self.writer = io.open(fname, 'wb')
-            self.reader = io.open(fname, 'rb', 1)
-            self.proc = subprocess.Popen(['docker', 'logs', '-f',
-                                          '--tail', '1', self.name],
-                                         stdout=self.writer,
-                                         stderr=self.writer)
-        except Exception:
-            self.proc = None
-            self.writer.close()
+            output = subprocess.check_output(args, stderr=subprocess.STDOUT).splitlines()
+        except subprocess.CalledProcessError:
+            return []
 
-    def __del__(self):
-        try:
-            if hasattr(self, 'proc') and self.proc:
-                os.kill(self.proc.pid, signal.SIGTERM)
-            if hasattr(self, 'writer') and self.writer:
-                self.writer.close()
-        except OSError as ex:
-            print(ex)
+        if len(output) > 0:
+            # we get back the UTC timestamp from the server but the client
+            # uses the local TZ for the timestamp for some unholy reason,
+            # so we need to add an offset
+            ts = output[-1].split()[0]
+            utc_dt = dt.datetime.strptime(ts[:19], '%Y-%m-%dT%H:%M:%S')
+            now = time.time()
+            offset = dt.datetime.fromtimestamp(now) - dt.datetime.utcfromtimestamp(now)
+            utc_dt = utc_dt + offset
+            self.last_timestamp = str(int(time.mktime(utc_dt.timetuple())))
 
-    def paint(self):
-        if not hasattr(self, 'proc') or not self.proc:
-            self.fetch()
-        if self.proc and self.proc.poll() is None:
-            read = self.reader.read()
-            self.subwin.addstr(read)
-            self.subwin.idlok(1)
-        else:
-            self.proc = None
-            self.subwin.clear()
-            self.subwin.addstr(0, 0, 'No container {} running'.format(self.name))
-            _, x = self.subwin.getmaxyx()
-            self.subwin.addstr(0, x-2, self.progress.next())
-
-        self.subwin.refresh()
-        self.outer.refresh()
+        # trim out the `docker logs` timestamps b/c we have the timestamps
+        # from the servers
+        output = [line[31:] for line in output]
+        return output
 
 
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-def main(*args, **kwargs):
-    try:
-        screen = curses.initscr()
-        curses.start_color()
-        curses.use_default_colors()
-        for i in range(0, curses.COLORS):
-            curses.init_pair(i, i, -1)
-        _, maxx = screen.getmaxyx()
-        curses.curs_set(0)
-        screen.clear()
-        screen.refresh()
-        elements = (
-            DockerPane(screen, y=0, nlines=9, ncols=maxx-1),
-            ConsulPane(screen, y=9, nlines=10, ncols=maxx-1),
-            LogsPane(screen, name='my_mysql_1', y=20, nlines=8, ncols=maxx-1),
-            LogsPane(screen, name='my_mysql_2', y=29, nlines=8, ncols=maxx-1),
-            LogsPane(screen, name='my_mysql_3', y=37, nlines=8, ncols=maxx-1)
-        )
-        while True:
-            for element in elements:
-                element.paint()
-    finally:
-        curses.endwin()
-        traceback.print_exc()
+@app.route('/docker')
+def docker_handler():
+    resp = docker_pane.fetch()
+    return render_template('docker.html', docker=resp)
 
+@app.route('/consul')
+def consul_handler():
+    resp = consul_pane.fetch()
+    return render_template('consul.html', consul=resp)
+
+@app.route('/mysql/<int:mysql_id>')
+def mysql_handler(mysql_id):
+    resp = mysql_panes[mysql_id - 1].fetch()
+    return render_template('mysql.html', logs=resp)
 
 
 if __name__ == '__main__':
-    curses.wrapper(main)
+    docker_pane = DockerPane(name='Docker')
+    consul_pane = ConsulPane(name='Consul')
+    mysql_panes = [
+        LogsPane(name='my_mysql_1'),
+        LogsPane(name='my_mysql_2'),
+        LogsPane(name='my_mysql_3'),
+    ]
+
+    app.run(threaded=True, debug=True)

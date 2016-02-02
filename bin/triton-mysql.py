@@ -309,10 +309,9 @@ def on_change():
     log.debug('on_change check fired.')
     try:
         node = MySQLNode()
+        cb = Containerbuddy(node)
         if node.is_primary():
             return
-
-        cb = Containerbuddy(node)
 
         ctx = dict(user=config.repl_user,
                    password=config.repl_password,
