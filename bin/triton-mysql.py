@@ -54,6 +54,7 @@ BACKUP_NAME = os.environ.get('BACKUP_NAME', 'mysql-backup')
 BACKUP_TTL = '{}s'.format(os.environ.get('BACKUP_TTL', 86400)) # every 24 hours
 SESSION_CACHE_FILE = os.environ.get('SESSION_CACHE_FILE', '/tmp/mysql-session')
 SESSION_NAME = os.environ.get('SESSION_NAME', 'mysql-primary-lock')
+SESSION_TTL = int(os.environ.get('SESSION_TTL', 60))
 
 # ---------------------------------------------------------
 
@@ -308,6 +309,9 @@ def on_change():
     log.debug('on_change check fired.')
     try:
         node = MySQLNode()
+        if node.is_primary():
+            return
+
         cb = Containerbuddy(node)
 
         ctx = dict(user=config.repl_user,
@@ -318,19 +322,49 @@ def on_change():
 
         # need to stop replication whether we're the new primary or not
         stop_replication(node.conn)
-        primary = get_primary_node()
-        if not primary:
-            session_id = get_session()
-            if mark_with_session(PRIMARY_KEY, node.hostname, session_id):
-                return
-
-        # if the primary node is set or we failed to elect ourselves
-        # then we're going to point ourselves to the new primary
-        set_primary_for_replica(node.conn)
 
     except Exception as ex:
         log.exception(ex)
         sys.exit(1)
+
+
+    while True:
+        try:
+            # if there is no primary node, we'll try to obtain the lock.
+            # if we get the lock we'll reload as the new primary, otherwise
+            # someone else got the lock but we don't know who yet so loop
+            primary = get_primary_node()
+            if not primary:
+                session_id = get_session(no_cache=True)
+                if mark_with_session(PRIMARY_KEY, node.hostname, session_id):
+                    node.state = PRIMARY
+                    if cb.update():
+                        cb.reload()
+                    return
+                else:
+                    # we lost the race to lock the session for ourselves
+                    log.debug('could not lock session')
+                    time.sleep(1)
+                    continue
+
+            # we know who the primary is but not whether they're healthy.
+            # if it's not healthy, we'll throw an exception and start over.
+            ip = get_primary_host(primary=primary)
+            if ip == node.ip:
+                if cb.update():
+                    cb.reload()
+                return
+
+            set_primary_for_replica(node.conn)
+            return
+
+        except Exception as ex:
+            # This exception gets thrown if the session lock for `mysql-primary`
+            # key has not expired yet (but there's no healthy primary either),
+            # or if the replica's target primary isn't ready yet.
+            log.debug(ex)
+            time.sleep(1) # avoid hammering Consul
+            continue
 
 
 def create_snapshot():
@@ -488,6 +522,7 @@ def wait_for_connection(user='root', password=None, database=None, timeout=30):
             time.sleep(1)
 
 def mark_with_session(key, val, session_id, timeout=10):
+    log.debug('mark_with_session')
     while timeout > 0:
         try:
             return consul.kv.put(key, val, acquire=session_id)
@@ -672,7 +707,7 @@ def get_session(no_cache=False):
         session_id = create_session()
     return session_id
 
-def create_session(ttl=60):
+def create_session(ttl=SESSION_TTL):
     """
     We can't rely on storing Consul session IDs in memory because
     `health` and `onChange` handler calls happen in a subsequent
@@ -802,26 +837,25 @@ def set_primary_for_replica(conn):
     mysql_exec(conn, sql, (primary, config.repl_user, config.repl_password,))
 
 
-def get_primary_host(timeout=30):
+def get_primary_host(primary=None, timeout=30):
     """
     Query Consul for healthy mysql nodes and check their ServiceID vs
     the primary node. Returns the IP address of the matching node or
     raises an exception.
     """
-    primary = get_primary_node()
+    log.debug('get_primary_host')
+    if not primary:
+        primary = get_primary_node()
     if not primary:
         raise Exception('Tried replication setup but could not find primary.')
     log.debug('Checking if primary (%s) is healthy...', primary)
 
     while timeout > 0:
         try:
-            nodes = consul.catalog.service(PRIMARY_KEY)[1]
-            ips = [service['ServiceAddress'] for service in nodes
-                   if service['ServiceID'].endswith(primary)]
+            nodes = consul.health.service(PRIMARY_KEY, passing=True)[1]
+            ips = [service['Service']['Address'] for service in nodes
+                   if service['Service']['ID'].endswith(primary)]
             return ips[0]
-        except IndexError:
-            log.warn('No mysql-primary found.')
-            break
         except Exception:
             timeout = timeout - 1
             time.sleep(1)
@@ -830,6 +864,7 @@ def get_primary_host(timeout=30):
                     'set and not healthy.')
 
 def get_primary_node(timeout=10):
+    log.debug('get_primary_node')
     while timeout > 0:
         try:
             result = consul.kv.get(PRIMARY_KEY)
