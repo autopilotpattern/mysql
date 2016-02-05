@@ -1,3 +1,7 @@
+var hideLogSection = function(e) {
+    e.parentNode.parentNode.style.display = "none";
+}
+
 var replaceTable = function(name) {
     return function(data) {
         thisDiv = document.getElementById(name);
@@ -12,6 +16,7 @@ var appendTable = function(name) {
             data = thisDiv.innerHTML + data;
             thisDiv.innerHTML = data.substr(data.length-1000); // truncate old
             thisDiv.scrollTop = thisDiv.scrollHeight;
+            thisDiv.parentNode.style.display = "block";
         }
     };
 };

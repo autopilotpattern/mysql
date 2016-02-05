@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="static/milligram.min.css">
   <script type="text/javascript" src="static/index.js"></script>
-  <style>body {color: #000000;}</style>
+  <style>
+    body {color: #000000;}
+    a,h5 {color: #ff6500;}
+  </style>
 </head>
 <body>
 
@@ -22,22 +25,25 @@
     </div>
     <hr/>
 	<h5 class="title">Consul</h5>
-    <div id="row">
-      <table>
-        <tbody id="consulTable"></tbody>
-      </table>
-    </div>
+    <div id="consulTable"></div>
     <hr/>
-	<h5 class="title">my_mysql_1</h5>
-    <div id="mysql_1" style="height:100px;overflow-y:scroll;overflow-x:hidden;">
+
+    <div>
+	  <h5 class="title"><a href="#" onclick="hideLogSection(this)">my_mysql_1</a></h5>
+      <div id="mysql_1" style="height:100px;overflow-y:scroll;overflow-x:hidden;"></div>
+      <hr/>
     </div>
-    <hr/>
-    <h5 class="title">my_mysql_2</h5>
-    <div id="mysql_2" style="height:100px;overflow-y:scroll;overflow-x:hidden;">
+
+    <div>
+	  <h5 class="title"><a href="#" onclick="hideLogSection(this)">my_mysql_2</a></h5>
+      <div id="mysql_2" style="height:100px;overflow-y:scroll;overflow-x:hidden;"></div>
+      <hr/>
     </div>
-    <hr/>
-    <h5 class="title">my_mysql_3</h5>
-    <div id="mysql_3" style="height:100px;overflow-y:scroll;overflow-x:hidden;">
+
+    <div>
+	  <h5 class="title"><a href="#" onclick="hideLogSection(this)">my_mysql_3</a></h5>
+      <div id="mysql_3" style="height:100px;overflow-y:scroll;overflow-x:hidden;"></div>
+      <hr/>
     </div>
 
 </div>

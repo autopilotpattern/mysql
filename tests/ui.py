@@ -201,6 +201,15 @@ class LogsPane(Pane):
         output = [line[31:] for line in output]
         return output
 
+@app.template_filter('colorize')
+def colorize(value):
+    if value == 'critical':
+        return '<span style="color:#c52717">critical</span>'
+    elif value == 'passing':
+        return '<span style="color:#00ff00">passing</span>'
+    else:
+        return value
+
 
 @app.route('/')
 def index():
