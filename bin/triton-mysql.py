@@ -265,6 +265,7 @@ def health():
         cb = Containerbuddy(node)
         if cb.update():
             cb.reload()
+            return
 
         # cb.reload() will exit early so no need to setup
         # connection until this point
@@ -310,6 +311,7 @@ def on_change():
     try:
         node = MySQLNode()
         cb = Containerbuddy(node)
+        cb.update() # this will populate MySQLNode state correctly
         if node.is_primary():
             return
 
