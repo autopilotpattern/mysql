@@ -1,0 +1,20 @@
+{
+  "consul": "consul:8500",
+  "onStart": "python /bin/triton-mysql.py",
+  "services": [
+    {
+      "name": "mysql",
+      "port": 3306,
+      "health": "python /bin/triton-mysql.py health",
+      "poll": 5,
+      "ttl": 25
+    }
+  ],
+  "backends": [
+    {
+      "name": "mysql-primary",
+      "poll": 10,
+      "onChange": "python /bin/triton-mysql.py on_change"
+    }
+  ]
+}

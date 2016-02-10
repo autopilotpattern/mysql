@@ -1,0 +1,59 @@
+# For advice on how to change settings please see
+# http://dev.mysql.com/doc/refman/5.7/en/server-configuration-defaults.html
+
+[mysqld]
+
+# The Containerbuddy `onStart` handler will overwrite this with the value of
+# MYSQL_INNODB_BUFFER_POOL_SIZE so that we can set it relative to the
+# container size. Set to the amount of RAM for the most important data
+# cache in MySQL. Start at 70% of total RAM for dedicated server, else 10%.
+
+innodb_buffer_pool_size = $buffer
+
+# Remove leading # to turn on a very important data integrity option: logging
+# changes to the binary log between backups.
+
+#gtid-mode=ON
+#enforce-gtid-consistency=ON
+
+# Required for MySQL replication. The Containerbuddy `onStart` handler will
+# overwrite report-host with the container hostname and server-id with a
+# numerical ID derived from the container hostname
+server-id=$server_id
+report-host=$hostname
+
+# We have intentionally not set log_bin here so that we're forced to pass
+# it into the command-line parameters. This lets us bootstrap the DB without
+# causing binary log entries that will prevent replicas from coming online
+# due to conflicts over the system `mysql` database.
+#log_bin=mysql-bin
+#log_slave_updates=ON
+
+# Remove leading # to set options mainly useful for reporting servers.
+# The server defaults are faster for transactions and fast SELECTs.
+# Adjust sizes as needed, experiment to find the optimal values.
+# join_buffer_size = 128M
+# sort_buffer_size = 2M
+# read_rnd_buffer_size = 2M
+# query_cache_size = 32M
+# query_cache_type = ON
+
+tmp_table_size = 128M
+max_heap_table_size = 128M
+
+
+skip-host-cache
+#skip-name-resolve
+datadir=/var/lib/mysql
+#socket=/var/lib/mysql/mysql.sock
+secure-file-priv=/var/lib/mysql
+user=mysql
+
+# Disabling symbolic-links is recommended to prevent assorted security risks
+symbolic-links=0
+
+# Disable log-error so that MySQL sends its errors to stderr and therefore
+# to the Docker log driver
+# log-error=/var/log/mysqld.log
+
+pid-file=/var/run/mysqld/mysqld.pid

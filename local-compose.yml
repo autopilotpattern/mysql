@@ -1,0 +1,17 @@
+mysql:
+    extends:
+      file: common-compose.yml
+      service: mysql
+    mem_limit: 512m
+    build: .
+    links:
+      - consul:consul
+    ports:
+      - 3306
+
+consul:
+    extends:
+      file: common-compose.yml
+      service: consul
+    ports:
+    - 8500:8500

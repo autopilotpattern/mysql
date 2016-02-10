@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="static/milligram.min.css">
+  <script type="text/javascript" src="static/index.js"></script>
+  <style>
+    body {color: #000000;}
+    a,h5 {color: #ff6500;}
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+	<h5 class="title">Docker</h5>
+    <div id="dockerTable">
+      <div class="row">
+        <div class="column"><strong>ID</strong></div>
+        <div class="column"><strong>Name</strong></div>
+        <div class="column"><strong>Command</strong></div>
+        <div class="column"><strong>Status</strong></div>
+      </div>
+    </div>
+    <hr/>
+	<h5 class="title">Consul</h5>
+    <div id="consulTable"></div>
+    <hr/>
+
+    <div>
+	  <h5 class="title"><a href="#" onclick="hideLogSection(this)">my_mysql_1</a></h5>
+      <div id="mysql_1" style="height:100px;overflow-y:scroll;overflow-x:hidden;"></div>
+      <hr/>
+    </div>
+
+    <div>
+	  <h5 class="title"><a href="#" onclick="hideLogSection(this)">my_mysql_2</a></h5>
+      <div id="mysql_2" style="height:100px;overflow-y:scroll;overflow-x:hidden;"></div>
+      <hr/>
+    </div>
+
+    <div>
+	  <h5 class="title"><a href="#" onclick="hideLogSection(this)">my_mysql_3</a></h5>
+      <div id="mysql_3" style="height:100px;overflow-y:scroll;overflow-x:hidden;"></div>
+      <hr/>
+    </div>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,11 @@
+mysql:
+    extends:
+      file: common-compose.yml
+      service: mysql
+    links:
+      - consul:consul
+
+consul:
+    extends:
+      file: common-compose.yml
+      service: consul
