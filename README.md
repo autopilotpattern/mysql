@@ -1,15 +1,16 @@
 # triton-mysql
 
-MySQL designed for container-native deployment on Joyent's Triton platform. This repo serves as a blueprint for automatically setting up replication, backups, and failover without human intervention.
+MySQL designed for container-native deployment on Joyent's Triton platform. This repo serves as a blueprint demonstrating the Autopilot design pattern -- automatically setting up replication, backups, and failover without human intervention.
 
 ---
 
 ## Architecture
 
 A running cluster includes the following components:
-- [Consul](https://www.consul.io/): used to coordinate replication and failover
+
 - [MySQL](https://www.mysql.com/): we're using MySQL5.6 via [Percona Server](https://www.percona.com/software/mysql-database/percona-server), and [`xtrabackup`](https://www.percona.com/software/mysql-database/percona-xtrabackup) for running hot snapshots.
-- [Manta](https://www.joyent.com/object-storage): for securely and durably storing our MySQL snapshots.
+- [Consul](https://www.consul.io/): used to coordinate replication and failover
+- [Manta](https://www.joyent.com/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
 - [Containerbuddy](http://containerbuddy.io): included in our MySQL containers orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `onStart`, `health`, and `onChange` handlers.
 - `triton-mysql.py`: a small Python application that Containerbuddy will call into to do the heavy lifting of bootstrapping MySQL.
 
@@ -20,7 +21,9 @@ When a new MySQL node is started, Containerbuddy's `onStart` handler will call i
 
 The first thing the `triton-mysql.py` application does is to ask Consul whether a primary node exists. If not, the application will atomically mark the node as primary in Consul and then bootstrap the node as a new primary. Bootstrapping a primary involves setting up users (root, default, and replication), and creating a default schema. Once the primary bootstrap process is complete, it will use `xtrabackup` to create a backup and upload it to Manta. The application then writes a TTL key to Consul which will tell us when next to run a backup, and a non-expiring key that records the path on Manta where the most recent backup was stored.
 
-If a primary already exists, then the application will ask Consul for the path to the most recent backup and download it. The application will then ask Consul for the IP address of the primary and set up replication from that primary before allowing the new replica to join the cluster.
+If a primary already exists, then the application will ask Consul for the path to the most recent backup snapshot and download it and the most recent binlog. The application will then ask Consul for the IP address of the primary and set up replication from that primary before allowing the new replica to join the cluster.
+
+Replication in this architecture uses [Global Transaction Idenitifers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) so that replicas can autoconfigure their position within the binlog.
 
 ### Maintenance via `health` handler
 
@@ -32,14 +35,17 @@ If the node is primary, the handler will ask Consul if the TTL key for backups h
 
 The Containerbuddy configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, the `onChange` handler will fire and call into `triton-mysql.py`. Replicas will all attempt to become the new primary by writing a lock into Consul. Only one replica will receive the lock and become the new primary. The new primary will reload its configuration to start writing its heartbeats as primary, while the other replicas will update their replication configuration to start replicating from the new primary.
 
+### Promotion of replica to primary
 
-### Zero downtime promotion of replica to primary
-
-With automatic failover, taking an existing replica and making it a primary for the cluster is a simple matter of updating the flag we've set in Consul and then allowing the Containerbuddy `onChange` handlers to update the replication topology for each node independently.
+With the automatic failover described above, manually promoting a replica to a primary is a simple matter of updating the flag we've set in Consul and then allowing the Containerbuddy `onChange` handlers to update the replication topology for each node independently.
 
 - Update the `mysql-primary` key in Consul to match the new primary's short-form container ID (i.e. its hostname).
 - The `onChange` handlers on the other replicas will automatically detect the change in what node is the primary, and will execute `CHANGE MASTER` to change their replication source to the new primary.
 - At any point after this, we use `docker exec` to run `STOP SLAVE` on the new primary and can tear down the old primary if it still exists.
+
+### Optional standby
+
+By default, the primary performs the backup snapshots. For deployments with high transactional volumes it might make sense to use a standby instance to perform snapshots so as not to use resources on the primary during the snapshot. Passing the flag `USE_STANDBY=yes` to the containers at startup will cause one instance to be reserved for this use and not serve queries.
 
 ---
 
@@ -47,11 +53,7 @@ With automatic failover, taking an existing replica and making it a primary for 
 
 Starting a new cluster is easy. Just run `docker-compose up -d` and in a few moments you'll have a running MySQL primary. Both the primary and replicas are described as a single `docker-compose` service. During startup, [Containerbuddy](http://containerbuddy.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `onStart` handler.
 
-Run `docker-compose scale mysql=2` to add a replica (or more than one!). Replication in this architecture uses [Global Transaction Idenitifers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) rather than binlog positioning as this allows replicas to autoconfigure their position within the binlog. A primary that has the entire execution history can bootstrap a replica with no additional work. The replicas' `onChange` handler will automatically move replication to a new primary if one is created.
-
-So long as we're working with a new cluster that has never rotated the binlog on the primary (and where there's not too much data yet), the new replicas will be able to catch up to the primary without further intervention. But if you're bringing up a replica in an existing cluster, you'll need to try the following workflow.
-
-
+Run `docker-compose scale mysql=2` to add a replica (or more than one!). The replicas will automatically configure themselves to to replicate from the primary and will register themselves in Consul as replicas once they're ready.
 
 ### Configuration
 
@@ -72,7 +74,7 @@ These variables are optional but you most likely want them:
 - `MANTA_KEY_ID`: the MD5-format ssh key id for the Manta account/subuser (ex. `1a:b8:30:2e:57:ce:59:1d:16:f6:19:97:f2:60:2b:3d`).
 - `MANTA_PRIVATE_KEY`: the private ssh key for the Manta account/subuser.
 - `MANTA_BUCKET`: the path on Manta where backups will be stored. (ex. `/myaccount/stor/triton-mysql`)
-- `LOG_LEVEL`: will set the logging level of the `triton-mysql.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels).
+- `LOG_LEVEL`: will set the logging level of the `triton-mysql.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels). In production you'll want this to be at `INFO` or above.
 - `TRITON_MYSQL_CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
 - `USE_STANDBY` tells the `triton-mysql.py` application to use a separate standby MySQL node to run backups. This might be useful if you have a very high write throughput on the primary node. Defaults to `no` (turn on with `yes` or `on`).
 
@@ -88,7 +90,7 @@ The following variables control the names of keys written to Consul. They are op
 - `SESSION_CACHE_FILE`: The path to the on-disk cache of the Consul session ID for each node. (Defaults to `/tmp/mysql-session`.)
 - `SESSION_NAME`: The name used for session locks. (Defaults to `mysql-primary-lock`.)
 
-These variables *may* be passed but it's not recommended to do this. Instead we'll set a one-time root password during DB initialization; the password will be dropped into the logs.
+These variables *may* be passed but it's not recommended to do this. Instead we'll set a one-time root password during DB initialization; the password will be dropped into the logs. Security can be improved by using a key management system in place of environment variables. The constructor for the `MySQLNode` class would be a good place to hook in this behavior, which is out-of-scope for this demonstration.
 
 - `MYSQL_RANDOM_ROOT_PASSWORD`: defaults to "yes"
 - `MYSQL_ONETIME_PASSWORD`: defaults to "yes"

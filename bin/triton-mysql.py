@@ -195,6 +195,8 @@ class Manta(object):
             f.write(data)
 
     def put_backup(self, backup_id, infile):
+        # TODO: stream this backup once python-manta supports it:
+        # ref https://github.com/joyent/python-manta/issues/6
         mpath = '{}/{}'.format(self.bucket, backup_id)
         with open(infile, 'r') as f:
             self.client.put_object(mpath, file=f)
