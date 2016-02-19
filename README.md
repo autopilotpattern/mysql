@@ -8,7 +8,7 @@ MySQL designed for container-native deployment on Joyent's Triton platform. This
 
 A running cluster includes the following components:
 
-- [MySQL](https://www.mysql.com/): we're using MySQL5.6 via [Percona Server](https://www.percona.com/software/mysql-database/percona-server), and [`xtrabackup`](https://www.percona.com/software/mysql-database/percona-xtrabackup) for running hot snapshots.
+- [MySQL](https://dev.mysql.com/): we're using MySQL5.6 via [Percona Server](https://www.percona.com/software/mysql-database/percona-server), and [`xtrabackup`](https://www.percona.com/software/mysql-database/percona-xtrabackup) for running hot snapshots.
 - [Consul](https://www.consul.io/): used to coordinate replication and failover
 - [Manta](https://www.joyent.com/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
 - [Containerbuddy](http://containerbuddy.io): included in our MySQL containers orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `onStart`, `health`, and `onChange` handlers.
