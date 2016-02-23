@@ -1,0 +1,5 @@
+Flask==0.10.1
+manta==2.5.0
+PyMySQL==0.6.7
+python-consul==0.4.7
+requests==2.9.0
