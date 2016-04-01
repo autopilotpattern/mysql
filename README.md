@@ -1,6 +1,6 @@
-# triton-mysql
+# MySQL autopilot pattern
 
-MySQL designed for container-native deployment on Joyent's Triton platform. This repo serves as a blueprint demonstrating the Autopilot design pattern -- automatically setting up replication, backups, and failover without human intervention.
+MySQL designed for container-native deployment on Joyent's Triton platform. This repo serves as a blueprint demonstrating the autopilot design pattern -- automatically setting up replication, backups, and failover without human intervention.
 
 ---
 
