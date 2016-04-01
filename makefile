@@ -15,8 +15,8 @@ build:
 	docker-compose -p my -f local-compose.yml build
 
 ship:
-	docker tag -f my_mysql 0x74696d/triton-mysql
-	docker push 0x74696d/triton-mysql
+	docker tag -f my_mysql autopilotpattern/mysql
+	docker push autopilotpattern/mysql
 
 # -------------------------------------------------------
 # for testing against Docker locally

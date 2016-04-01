@@ -1,7 +1,7 @@
 # MySQL designed for container-native deployment on Joyent's Triton platform.
 
 mysql:
-    image: 0x74696d/triton-mysql:latest
+    image: autopilotpattern/mysql:latest
     mem_limit: 4g
     restart: always
     env_file: _env
