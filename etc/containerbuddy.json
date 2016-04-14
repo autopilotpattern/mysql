@@ -1,5 +1,5 @@
 {
-  "consul": "consul:8500",
+  "consul": "{{ .CONSUL }}:8500",
   "onStart": "python /bin/triton-mysql.py",
   "services": [
     {
