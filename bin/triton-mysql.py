@@ -203,17 +203,17 @@ class Manta(object):
 
 # ---------------------------------------------------------
 
-class Containerbuddy(object):
+class Containerpilot(object):
     """
-    Containerbuddy config is where we rewrite Containerbuddy's own config
+    Containerpilot config is where we rewrite Containerpilot's own config
     so that we can dynamically alter what service we advertise
     """
 
     def __init__(self, node):
         # TODO: we should make sure we can support JSON-in-env-var
-        # the same as Containerbuddy itself
+        # the same as Containerpilot itself
         self.node = node
-        self.path = os.environ.get('CONTAINERBUDDY').replace('file://', '')
+        self.path = os.environ.get('CONTAINERPILOT').replace('file://', '')
         with open(self.path, 'r') as f:
             self.config = json.loads(f.read())
 
@@ -231,12 +231,12 @@ class Containerbuddy(object):
             f.write(new_config)
 
     def reload(self):
-        """ force Containerbuddy to reload its configuration """
-        log.info('Reloading Containerbuddy configuration.')
+        """ force Containerpilot to reload its configuration """
+        log.info('Reloading Containerpilot configuration.')
         os.kill(1, signal.SIGHUP)
 
 # ---------------------------------------------------------
-# Top-level functions called by Containerbuddy or forked by this program
+# Top-level functions called by Containerpilot or forked by this program
 
 def on_start():
     """
@@ -257,14 +257,14 @@ def on_start():
 def health():
     """
     Run a simple health check. Also acts as a check for whether the
-    Containerbuddy configuration needs to be reloaded (if it's been
+    Containerpilot configuration needs to be reloaded (if it's been
     changed externally), or if we need to make a backup because the
     backup TTL has expired.
     """
     log.debug('health check fired.')
     try:
         node = MySQLNode()
-        cb = Containerbuddy(node)
+        cb = Containerpilot(node)
         if cb.update():
             cb.reload()
             return
@@ -312,7 +312,7 @@ def on_change():
     log.debug('on_change check fired.')
     try:
         node = MySQLNode()
-        cb = Containerbuddy(node)
+        cb = Containerpilot(node)
         cb.update() # this will populate MySQLNode state correctly
         if node.is_primary():
             return
@@ -791,7 +791,7 @@ def write_snapshot(conn):
     # we set the BACKUP_TTL before we run the backup so that we don't
     # have multiple health checks running concurrently. We then fork the
     # create_snapshot call and return. The snapshot process will be
-    # re-parented to Containerbuddy
+    # re-parented to Containerpilot
     set_backup_ttl()
     subprocess.Popen(['python', '/bin/triton-mysql.py', 'create_snapshot'])
 

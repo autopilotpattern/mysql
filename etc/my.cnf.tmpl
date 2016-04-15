@@ -3,7 +3,7 @@
 
 [mysqld]
 
-# The Containerbuddy `onStart` handler will overwrite this with the value of
+# The Containerpilot `onStart` handler will overwrite this with the value of
 # MYSQL_INNODB_BUFFER_POOL_SIZE so that we can set it relative to the
 # container size. Set to the amount of RAM for the most important data
 # cache in MySQL. Start at 70% of total RAM for dedicated server, else 10%.
@@ -16,7 +16,7 @@ innodb_buffer_pool_size = $buffer
 #gtid-mode=ON
 #enforce-gtid-consistency=ON
 
-# Required for MySQL replication. The Containerbuddy `onStart` handler will
+# Required for MySQL replication. The Containerpilot `onStart` handler will
 # overwrite report-host with the container hostname and server-id with a
 # numerical ID derived from the container hostname
 server-id=$server_id
