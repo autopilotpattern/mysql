@@ -6,7 +6,7 @@ mysql:
     restart: always
     env_file: _env
     environment:
-      - CONTAINERBUDDY=file:///etc/containerbuddy.json
+      - CONTAINERPILOT=file:///etc/containerpilot.json
       - MANTA_PRIVATE_KEY
 
     # expose for linking, but each container gets a private IP for

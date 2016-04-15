@@ -17,14 +17,14 @@ RUN curl -Ls -o get-pip.py https://bootstrap.pypa.io/get-pip.py && \
         python-Consul==0.4.7 \
         manta==2.5.0
 
-# get Containerbuddy release
-RUN export CB=containerbuddy-0.1.1 &&\
+# get Containerpilot release
+RUN export CB=containerpilot-0.1.1 &&\
    curl -Lo /tmp/${CB}.tar.gz \
-   https://github.com/joyent/containerbuddy/releases/download/0.1.1/${CB}.tar.gz && \
+   https://github.com/joyent/containerpilot/releases/download/0.1.1/${CB}.tar.gz && \
    tar -xf /tmp/${CB}.tar.gz && \
-   mv /containerbuddy /bin/
+   mv /containerpilot /bin/
 
-# configure Containerbuddy and MySQL
+# configure Containerpilot and MySQL
 COPY bin/* /bin/
 COPY etc/* /etc/
 
@@ -32,7 +32,7 @@ COPY etc/* /etc/
 ENTRYPOINT []
 
 # use --console to get error logs to stderr
-CMD [ "/bin/containerbuddy", \
+CMD [ "/bin/containerpilot", \
       "mysqld", \
       "--console", \
       "--log-bin=mysql-bin", \

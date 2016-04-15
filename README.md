@@ -11,10 +11,10 @@ A running cluster includes the following components:
 - [MySQL](https://dev.mysql.com/): we're using MySQL5.6 via [Percona Server](https://www.percona.com/software/mysql-database/percona-server), and [`xtrabackup`](https://www.percona.com/software/mysql-database/percona-xtrabackup) for running hot snapshots.
 - [Consul](https://www.consul.io/): used to coordinate replication and failover
 - [Manta](https://www.joyent.com/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
-- [Containerbuddy](http://containerbuddy.io): included in our MySQL containers orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `onStart`, `health`, and `onChange` handlers.
-- `triton-mysql.py`: a small Python application that Containerbuddy will call into to do the heavy lifting of bootstrapping MySQL.
+- [ContainerPilot](http://containerpilot.io): included in our MySQL containers orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `onStart`, `health`, and `onChange` handlers.
+- `triton-mysql.py`: a small Python application that ContainerPilot will call into to do the heavy lifting of bootstrapping MySQL.
 
-When a new MySQL node is started, Containerbuddy's `onStart` handler will call into `triton-mysql.py`.
+When a new MySQL node is started, ContainerPilot's `onStart` handler will call into `triton-mysql.py`.
 
 
 ### Bootstrapping via `onStart` handler
@@ -27,17 +27,17 @@ Replication in this architecture uses [Global Transaction Idenitifers (GTID)](ht
 
 ### Maintenance via `health` handler
 
-The Containerbuddy `health` handler calls `triton-mysql.py health`. If the node is a replica, it merely checks the health of the instance by making a `SELECT 1` against the database and exiting with exit code 0 (which Containerbuddy then interprets as a message to send a heartbeat to Consul).
+The ContainerPilot `health` handler calls `triton-mysql.py health`. If the node is a replica, it merely checks the health of the instance by making a `SELECT 1` against the database and exiting with exit code 0 (which ContainerPilot then interprets as a message to send a heartbeat to Consul).
 
 If the node is primary, the handler will ask Consul if the TTL key for backups have expired or whether the binlog has been rotated. If either case is true, the application will create a new snapshot, upload it to Manta, and write the appropriate keys to Consul to tell replicas where to find the backup.
 
 ### Failover via `onChange` handler
 
-The Containerbuddy configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, the `onChange` handler will fire and call into `triton-mysql.py`. Replicas will all attempt to become the new primary by writing a lock into Consul. Only one replica will receive the lock and become the new primary. The new primary will reload its configuration to start writing its heartbeats as primary, while the other replicas will update their replication configuration to start replicating from the new primary.
+The ContainerPilot configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, the `onChange` handler will fire and call into `triton-mysql.py`. Replicas will all attempt to become the new primary by writing a lock into Consul. Only one replica will receive the lock and become the new primary. The new primary will reload its configuration to start writing its heartbeats as primary, while the other replicas will update their replication configuration to start replicating from the new primary.
 
 ### Promotion of replica to primary
 
-With the automatic failover described above, manually promoting a replica to a primary is a simple matter of updating the flag we've set in Consul and then allowing the Containerbuddy `onChange` handlers to update the replication topology for each node independently.
+With the automatic failover described above, manually promoting a replica to a primary is a simple matter of updating the flag we've set in Consul and then allowing the ContainerPilot `onChange` handlers to update the replication topology for each node independently.
 
 - Update the `mysql-primary` key in Consul to match the new primary's short-form container ID (i.e. its hostname).
 - The `onChange` handlers on the other replicas will automatically detect the change in what node is the primary, and will execute `CHANGE MASTER` to change their replication source to the new primary.
@@ -51,7 +51,7 @@ By default, the primary performs the backup snapshots. For deployments with high
 
 ## Running the cluster
 
-Starting a new cluster is easy. Just run `docker-compose up -d` and in a few moments you'll have a running MySQL primary. Both the primary and replicas are described as a single `docker-compose` service. During startup, [Containerbuddy](http://containerbuddy.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `onStart` handler.
+Starting a new cluster is easy. Just run `docker-compose up -d` and in a few moments you'll have a running MySQL primary. Both the primary and replicas are described as a single `docker-compose` service. During startup, [ContainerPilot](http://containerpilot.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `onStart` handler.
 
 Run `docker-compose scale mysql=2` to add a replica (or more than one!). The replicas will automatically configure themselves to to replicate from the primary and will register themselves in Consul as replicas once they're ready.
 

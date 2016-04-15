@@ -2,9 +2,9 @@ Docker ────────────────────────�
 
 CONTAINER ID    NAME           COMMAND                  STATUS
 
-2d1f6f68884e    my_mysql_1     "/bin/containerbuddy "   Up 9 minutes
-6a3c154f35a2    my_mysql_2     "/bin/containerbuddy "   Up 9 minutes
-d87aa4ed7af2    my_mysql_2     "/bin/containerbuddy "   Up 12 minutes
+2d1f6f68884e    my_mysql_1     "/bin/containerpilot "   Up 9 minutes
+6a3c154f35a2    my_mysql_2     "/bin/containerpilot "   Up 9 minutes
+d87aa4ed7af2    my_mysql_2     "/bin/containerpilot "   Up 12 minutes
 3a8adde85727    my_consul_1    "/bin/start -server -"   Up 12 minutes
 
 Consul ─────────────────────────────────────────────────────────────────────────────────
