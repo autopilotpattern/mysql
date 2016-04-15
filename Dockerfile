@@ -18,10 +18,10 @@ RUN curl -Ls -o get-pip.py https://bootstrap.pypa.io/get-pip.py && \
         manta==2.5.0
 
 # get Containerpilot release
-RUN export CB=containerpilot-0.1.1 &&\
-   curl -Lo /tmp/${CB}.tar.gz \
-   https://github.com/joyent/containerpilot/releases/download/0.1.1/${CB}.tar.gz && \
-   tar -xf /tmp/${CB}.tar.gz && \
+RUN export CP_VERSION=2.0.1 &&\
+   curl -Lo /tmp/containerpilot.tar.gz \
+   https://github.com/joyent/containerpilot/releases/download/${CP_VERSION}/containerpilot-${CP_VERSION}.tar.gz && \
+   tar -xzf /tmp/containerpilot.tar.gz && \
    mv /containerpilot /bin/
 
 # configure Containerpilot and MySQL
