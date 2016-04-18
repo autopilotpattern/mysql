@@ -1,2 +1,13 @@
+# build outputs
+*.pyc
+
+# credentials
+_env*
+manta
+manta.pub
+
+# temp
+python-manta/
+
+# macos frustration
 .DS_Store
-_env
