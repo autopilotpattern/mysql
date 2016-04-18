@@ -5,7 +5,7 @@ MySQL designed for automated operation using the [Autopilot Pattern](http://auto
 [![DockerPulls](https://img.shields.io/docker/pulls/autopilotpattern/mysql.svg)](https://registry.hub.docker.com/u/autopilotpattern/mysql/)
 [![DockerStars](https://img.shields.io/docker/stars/autopilotpattern/mysql.svg)](https://registry.hub.docker.com/u/autopilotpattern/mysql/)
 [![ImageLayers](https://badge.imagelayers.io/autopilotpattern/mysql:latest.svg)](https://imagelayers.io/?images=autopilotpattern/mysql:latest)
-[![Join the chat at https://gitter.im/autopilotpattern/mysql](https://badges.gitter.im/autopilotpattern/mysql.svg)](https://gitter.im/autopilotpattern/mysql)
+[![Join the chat at https://gitter.im/autopilotpattern/general](https://badges.gitter.im/autopilotpattern/general.svg)](https://gitter.im/autopilotpattern/general)
 
 ---
 
