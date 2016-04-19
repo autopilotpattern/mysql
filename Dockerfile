@@ -35,7 +35,7 @@ COPY bin/* /usr/local/bin/
 ENTRYPOINT []
 
 # use --console to get error logs to stderr
-CMD [ "/usr/local/bin/containerpilot", \
+CMD [ "containerpilot", \
       "mysqld", \
       "--console", \
       "--log-bin=mysql-bin", \

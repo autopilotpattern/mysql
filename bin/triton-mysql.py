@@ -175,7 +175,7 @@ class Manta(object):
         self.user = os.environ.get('MANTA_SUBUSER', None)
         self.role = os.environ.get('MANTA_ROLE', None)
         self.key_id = os.environ.get('MANTA_KEY_ID', None)
-        self.private_key = os.environ.get('MANTA_PRIVATE_KEY') # @TODO: need changes here
+        self.private_key = os.environ.get('MANTA_PRIVATE_KEY').replace('#', '\n')
         self.url = os.environ.get('MANTA_URL',
                                   'https://us-east.manta.joyent.com')
         self.bucket = os.environ.get('MANTA_BUCKET',
@@ -203,9 +203,9 @@ class Manta(object):
 
 # ---------------------------------------------------------
 
-class Containerpilot(object):
+class ContainerPilot(object):
     """
-    Containerpilot config is where we rewrite ContainerPilot's own config
+    ContainerPilot config is where we rewrite ContainerPilot's own config
     so that we can dynamically alter what service we advertise
     """
 
@@ -264,17 +264,17 @@ def health():
     log.debug('health check fired.')
     try:
         node = MySQLNode()
-        cb = Containerpilot(node)
-        if cb.update():
-            cb.reload()
+        cp = ContainerPilot(node)
+        if cp.update():
+            cp.reload()
             return
 
-        # cb.reload() will exit early so no need to setup
+        # cp.reload() will exit early so no need to setup
         # connection until this point
         ctx = dict(user=config.repl_user,
                    password=config.repl_password,
                    database=config.mysql_db,
-                   timeout=cb.config['services'][0]['ttl'])
+                   timeout=cp.config['services'][0]['ttl'])
         node.conn = wait_for_connection(**ctx)
 
         # Update our lock on being the primary/standby.
@@ -312,15 +312,15 @@ def on_change():
     log.debug('on_change check fired.')
     try:
         node = MySQLNode()
-        cb = Containerpilot(node)
-        cb.update() # this will populate MySQLNode state correctly
+        cp = ContainerPilot(node)
+        cp.update() # this will populate MySQLNode state correctly
         if node.is_primary():
             return
 
         ctx = dict(user=config.repl_user,
                    password=config.repl_password,
                    database=config.mysql_db,
-                   timeout=cb.config['services'][0]['ttl'])
+                   timeout=cp.config['services'][0]['ttl'])
         node.conn = wait_for_connection(**ctx)
 
         # need to stop replication whether we're the new primary or not
@@ -341,8 +341,8 @@ def on_change():
                 session_id = get_session(no_cache=True)
                 if mark_with_session(PRIMARY_KEY, node.hostname, session_id):
                     node.state = PRIMARY
-                    if cb.update():
-                        cb.reload()
+                    if cp.update():
+                        cp.reload()
                     return
                 else:
                     # we lost the race to lock the session for ourselves
@@ -354,8 +354,8 @@ def on_change():
             # if it's not healthy, we'll throw an exception and start over.
             ip = get_primary_host(primary=primary)
             if ip == node.ip:
-                if cb.update():
-                    cb.reload()
+                if cp.update():
+                    cp.reload()
                 return
 
             set_primary_for_replica(node.conn)
@@ -791,7 +791,7 @@ def write_snapshot(conn):
     # we set the BACKUP_TTL before we run the backup so that we don't
     # have multiple health checks running concurrently. We then fork the
     # create_snapshot call and return. The snapshot process will be
-    # re-parented to Containerpilot
+    # re-parented to ContainerPilot
     set_backup_ttl()
     subprocess.Popen(['python', '/usr/local/bin/triton-mysql.py', 'create_snapshot'])
 
