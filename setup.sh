@@ -2,23 +2,20 @@
 set -e -o pipefail
 
 help() {
-    echo 'Usage ./setup.sh [-f docker-compose.yml] [-p project]'
+    echo
+    echo 'Usage ./setup.sh ~/path/to/MANTA_PUBLIC_KEY ~/path/to/MANTA_PRIVATE_KEY'
     echo
     echo 'Checks that your Triton and Docker environment is sane and configures'
     echo 'an environment file to use.'
     echo
-    echo 'Optional flags:'
-    echo '  -f <filename>   use this file as the docker-compose config file'
-    echo '  -p <project>    use this name as the project prefix for docker-compose'
+    echo 'MANTA_PUBLIC_KEY and MANTA_PRIVATE_KEY are the filesystem paths to the SSH key'
+    echo 'used to connect to Manta for the database backups.'
+    echo
+    echo 'Additional details must be configured in the _env file, but this script will properly'
+    echo 'encode those key files for use with this MySQL image.'
+    echo
 }
 
-
-# default values which can be overriden by -f or -p flags
-export COMPOSE_PROJECT_NAME=mysql
-export COMPOSE_FILE=
-
-# give the docker remote api more time before timeout
-export COMPOSE_HTTP_TIMEOUT=300
 
 # populated by `check` function whenever we're using Triton
 TRITON_USER=
@@ -26,11 +23,34 @@ TRITON_DC=
 TRITON_ACCOUNT=
 
 # ---------------------------------------------------
-# Top-level commmands
+# Top-level commands
 
+# Check for correct configuration and setup _env file
+envcheck() {
 
-# Check for correct configuration
-check() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        tput rev  # reverse
+        tput bold # bold
+        echo 'Please provide paths to Manta public and private keys.'
+        tput sgr0 # clear
+
+        help
+        exit 1
+    fi
+
+    if [ ! -f "$1" ] || [ ! -f "$2" ]; then
+        tput rev  # reverse
+        tput bold # bold
+        echo 'One or both Manta key files are unreadable.'
+        tput sgr0 # clear
+
+        help
+        exit 1
+    fi
+
+    # Assign args to named vars
+    MANTA_PUBLIC_KEY_PATH=$1
+    MANTA_PRIVATE_KEY_PATH=$2
 
     command -v docker >/dev/null 2>&1 || {
         echo
@@ -50,11 +70,6 @@ check() {
         echo 'See https://apidocs.joyent.com/cloudapi/#getting-started'
         exit 1
     }
-
-    # if we're not testing on Triton, don't bother checking Triton config
-    if [ ! -z "${COMPOSE_FILE}" ]; then
-        exit 0
-    fi
 
     command -v triton >/dev/null 2>&1 || {
         echo
@@ -98,59 +113,66 @@ check() {
     fi
 
     # setup environment file
-    echo '# Environment variables for MySQL service' > _env
-    echo 'MYSQL_USER=' >> _env
-    echo 'MYSQL_PASSWORD=' >> _env
-    echo 'MYSQL_REPL_USER=' >> _env
-    echo 'MYSQL_REPL_PASSWORD=' >> _env
-    echo 'MYSQL_DATABASE=' >> _env
-    echo >> _env
+    if [ ! -f "_env" ]; then
+        echo '# Environment variables for MySQL service' > _env
+        echo 'MYSQL_USER=' >> _env
+        echo 'MYSQL_PASSWORD=' >> _env
+        echo 'MYSQL_REPL_USER=' >> _env
+        echo 'MYSQL_REPL_PASSWORD=' >> _env
+        echo 'MYSQL_DATABASE=' >> _env
+        echo >> _env
 
-    echo '# Environment variables for backups to Manta' > _env
-    echo 'MANTA_BUCKET=' >> _env
-    echo 'MANTA_URL=' >> _env
-    echo 'MANTA_USER=' >> _env
-    echo 'MANTA_SUBUSER=' >> _env
-    echo 'MANTA_ROLE=' >> _env
-    echo 'MANTA_KEY_ID=' >> _env
-    echo 'MANTA_PRIVATE_KEY=' >> _env
+        echo '# Environment variables for backups to Manta' >> _env
+        echo 'MANTA_BUCKET=' >> _env
+        echo 'MANTA_URL=' >> _env
+        echo 'MANTA_USER=' >> _env
+        echo 'MANTA_SUBUSER=' >> _env
+        echo 'MANTA_ROLE=' >> _env
 
-    # munge the private key so that we can pass it into an env var sanely
-    # and then unmunge it in our startup script
-    echo MANTA_PRIVATE_KEY=$(cat ${MANTA_PRIVATE_KEY}/key.pem | tr '\n' '#') >> _env
-    echo >> _env
+        # MANTA_KEY_ID must be the md5 formatted key fingerprint. A SHA256 will result in errors.
+        echo MANTA_KEY_ID=$(ssh-keygen -E md5 -lf ${MANTA_PUBLIC_KEY_PATH} | awk '{print substr($2,5)}') >> _env
 
-	# Consul discovery via Triton CNS
-    echo CONSUL=consul.svc.${TRITON_ACCOUNT}.${TRITON_DC}.cns.joyent.com >> _env
-    echo >> _env
+        # munge the private key so that we can pass it into an env var sanely
+        # and then unmunge it in our startup script
+        echo MANTA_PRIVATE_KEY=$(cat ${MANTA_PRIVATE_KEY_PATH} | tr '\n' '#') >> _env
+        echo >> _env
 
-    echo 'Edit the _env file with your desired MYSQL_* and MANTA_* config'
+        echo '# Consul discovery via Triton CNS' >> _env
+        echo CONSUL=consul.svc.${TRITON_ACCOUNT}.${TRITON_DC}.cns.joyent.com >> _env
+        echo >> _env
+
+        echo 'Edit the _env file with your desired MYSQL_* and MANTA_* config'
+    else
+        echo 'Existing _env file found, exiting'
+        exit
+    fi
 }
 
 # ---------------------------------------------------
 # parse arguments
 
-while getopts "f:p:h" optchar; do
-    case "${optchar}" in
-        f) export COMPOSE_FILE=${OPTARG} ;;
-        p) export COMPOSE_PROJECT_NAME=${OPTARG} ;;
-    esac
-done
-shift $(expr $OPTIND - 1 )
+# Get function list
+funcs=($(declare -F -p | cut -d " " -f 3))
 
 until
-    cmd=$1
-    if [ ! -z "$cmd" ]; then
-        shift 1
+    if [ ! -z "$1" ]; then
+        # check if the first arg is a function in this file, or use a default
+        if [[ " ${funcs[@]} " =~ " $1 " ]]; then
+            cmd=$1
+            shift 1
+        else
+            cmd="envcheck"
+        fi
+
         $cmd "$@"
         if [ $? == 127 ]; then
             help
         fi
+
         exit
+    else
+        help
     fi
 do
     echo
 done
-
-# default behavior
-check
