@@ -133,9 +133,7 @@ envcheck() {
 
         # munge the private key so that we can pass it into an env var sanely
         # and then unmunge it in our startup script
-        echo -n 'MANTA_PRIVATE_KEY="' >> _env
-        echo -n $(cat ${MANTA_PRIVATE_KEY_PATH} | tr '\n' '#') >> _env
-        echo '"' >> _env
+        echo MANTA_PRIVATE_KEY=$(cat ${MANTA_PRIVATE_KEY_PATH} | tr '\n' '#') >> _env
         echo >> _env
 
         echo '# Consul discovery via Triton CNS' >> _env
