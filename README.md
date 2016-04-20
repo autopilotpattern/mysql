@@ -82,7 +82,7 @@ These variables are optional but you most likely want them:
 - `MYSQL_REPL_PASSWORD`: this password will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_DATABASE`: create this database on startup if it doesn't already exist. The `MYSQL_USER` user will be granted superuser access to that DB.
 - `LOG_LEVEL`: will set the logging level of the `triton-mysql.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels). In production you'll want this to be at `INFO` or above.
-- `TRITON_MYSQL_CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
+- `CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
 - `USE_STANDBY` tells the `triton-mysql.py` application to use a separate standby MySQL node to run backups. This might be useful if you have a very high write throughput on the primary node. Defaults to `no` (turn on with `yes` or `on`).
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
