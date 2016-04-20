@@ -14,9 +14,9 @@ MySQL designed for automated operation using the [Autopilot Pattern](http://auto
 A running cluster includes the following components:
 
 - [MySQL](https://dev.mysql.com/): we're using MySQL5.6 via [Percona Server](https://www.percona.com/software/mysql-database/percona-server), and [`xtrabackup`](https://www.percona.com/software/mysql-database/percona-xtrabackup) for running hot snapshots.
-- [Consul](https://www.consul.io/): used to coordinate replication and failover
-- [Manta](https://www.joyent.com/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
 - [ContainerPilot](https://www.joyent.com/containerpilot): included in our MySQL containers to orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `preStart`, `health`, and `onChange` handlers.
+- [Consul](https://www.consul.io/): is our service catalog that works with ContainerPilot and helps coordinate service discovery, replication, and failover
+- [Manta](https://www.joyent.com/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
 - `triton-mysql.py`: a small Python application that ContainerPilot will call into to do the heavy lifting of bootstrapping MySQL.
 
 When a new MySQL node is started, ContainerPilot's `preStart` handler will call into `triton-mysql.py`.
@@ -58,11 +58,9 @@ By default, the primary performs the backup snapshots. For deployments with high
 
 ## Running the cluster
 
-See the section below on configuration and using the included `setup.sh` to make key encoding easier.
+Starting a new cluster is easy once you have [your `_env` file set with the configuration details](#configuration), **just run `docker-compose up -d` and in a few moments you'll have a running MySQL primary**. Both the primary and replicas are described as a single `docker-compose` service. During startup, [ContainerPilot](http://containerpilot.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `preStart` handler.
 
-Starting a new cluster is easy. Just run `docker-compose up -d` and in a few moments you'll have a running MySQL primary. Both the primary and replicas are described as a single `docker-compose` service. During startup, [ContainerPilot](http://containerpilot.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `preStart` handler.
-
-Run `docker-compose scale mysql=2` to add a replica (or more than one!). The replicas will automatically configure themselves to to replicate from the primary and will register themselves in Consul as replicas once they're ready.
+**Run `docker-compose scale mysql=2` to add a replica (or more than one!)**. The replicas will automatically configure themselves to to replicate from the primary and will register themselves in Consul as replicas once they're ready.
 
 ### Configuration
 
