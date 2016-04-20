@@ -3,16 +3,16 @@ set -e -o pipefail
 
 help() {
     echo
-    echo 'Usage ./setup.sh ~/path/to/MANTA_PUBLIC_KEY ~/path/to/MANTA_PRIVATE_KEY'
+    echo 'Usage ./setup.sh ~/path/to/MANTA_PRIVATE_KEY'
     echo
     echo 'Checks that your Triton and Docker environment is sane and configures'
     echo 'an environment file to use.'
     echo
-    echo 'MANTA_PUBLIC_KEY and MANTA_PRIVATE_KEY are the filesystem paths to the SSH key'
+    echo 'MANTA_PRIVATE_KEY is the filesystem path to an SSH private key'
     echo 'used to connect to Manta for the database backups.'
     echo
     echo 'Additional details must be configured in the _env file, but this script will properly'
-    echo 'encode those key files for use with this MySQL image.'
+    echo 'encode the SSH key details for use with this MySQL image.'
     echo
 }
 
@@ -28,20 +28,20 @@ TRITON_ACCOUNT=
 # Check for correct configuration and setup _env file
 envcheck() {
 
-    if [ -z "$1" ] || [ -z "$2" ]; then
+    if [ -z "$1" ]; then
         tput rev  # reverse
         tput bold # bold
-        echo 'Please provide paths to Manta public and private keys.'
+        echo 'Please provide a path to a SSH private key to access Manta.'
         tput sgr0 # clear
 
         help
         exit 1
     fi
 
-    if [ ! -f "$1" ] || [ ! -f "$2" ]; then
+    if [ ! -f "$1" ]; then
         tput rev  # reverse
         tput bold # bold
-        echo 'One or both Manta key files are unreadable.'
+        echo 'SSH private key for Manta is unreadable.'
         tput sgr0 # clear
 
         help
@@ -49,8 +49,7 @@ envcheck() {
     fi
 
     # Assign args to named vars
-    MANTA_PUBLIC_KEY_PATH=$1
-    MANTA_PRIVATE_KEY_PATH=$2
+    MANTA_PRIVATE_KEY_PATH=$1
 
     command -v docker >/dev/null 2>&1 || {
         echo
@@ -123,14 +122,14 @@ envcheck() {
         echo >> _env
 
         echo '# Environment variables for backups to Manta' >> _env
-        echo 'MANTA_BUCKET=' >> _env
-        echo 'MANTA_URL=' >> _env
-        echo 'MANTA_USER=' >> _env
+        echo 'MANTA_BUCKET= # an existing Manta bucket' >> _env
+        echo 'MANTA_USER= # a user with access to that bucket' >> _env
         echo 'MANTA_SUBUSER=' >> _env
         echo 'MANTA_ROLE=' >> _env
+        echo 'MANTA_URL=https://us-east.manta.joyent.com' >> _env
 
         # MANTA_KEY_ID must be the md5 formatted key fingerprint. A SHA256 will result in errors.
-        echo MANTA_KEY_ID=$(ssh-keygen -E md5 -lf ${MANTA_PUBLIC_KEY_PATH} | awk '{print substr($2,5)}') >> _env
+        echo MANTA_KEY_ID=$(ssh-keygen -yl -E md5 -f ${MANTA_PRIVATE_KEY_PATH} | awk '{print substr($2,5)}') >> _env
 
         # munge the private key so that we can pass it into an env var sanely
         # and then unmunge it in our startup script
