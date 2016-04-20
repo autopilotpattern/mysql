@@ -14,21 +14,23 @@ MySQL designed for automated operation using the [Autopilot Pattern](http://auto
 A running cluster includes the following components:
 
 - [MySQL](https://dev.mysql.com/): we're using MySQL5.6 via [Percona Server](https://www.percona.com/software/mysql-database/percona-server), and [`xtrabackup`](https://www.percona.com/software/mysql-database/percona-xtrabackup) for running hot snapshots.
-- [Consul](https://www.consul.io/): used to coordinate replication and failover
+- [ContainerPilot](https://www.joyent.com/containerpilot): included in our MySQL containers to orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `preStart`, `health`, and `onChange` handlers.
+- [Consul](https://www.consul.io/): is our service catalog that works with ContainerPilot and helps coordinate service discovery, replication, and failover
 - [Manta](https://www.joyent.com/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
-- [ContainerPilot](http://containerpilot.io): included in our MySQL containers orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `onStart`, `health`, and `onChange` handlers.
 - `triton-mysql.py`: a small Python application that ContainerPilot will call into to do the heavy lifting of bootstrapping MySQL.
 
-When a new MySQL node is started, ContainerPilot's `onStart` handler will call into `triton-mysql.py`.
+When a new MySQL node is started, ContainerPilot's `preStart` handler will call into `triton-mysql.py`.
 
 
-### Bootstrapping via `onStart` handler
+### Bootstrapping via `preStart` handler
+
+`preStart` (formerly `onStart`) runs and must exit cleanly before the main application is started.
 
 The first thing the `triton-mysql.py` application does is to ask Consul whether a primary node exists. If not, the application will atomically mark the node as primary in Consul and then bootstrap the node as a new primary. Bootstrapping a primary involves setting up users (root, default, and replication), and creating a default schema. Once the primary bootstrap process is complete, it will use `xtrabackup` to create a backup and upload it to Manta. The application then writes a TTL key to Consul which will tell us when next to run a backup, and a non-expiring key that records the path on Manta where the most recent backup was stored.
 
 If a primary already exists, then the application will ask Consul for the path to the most recent backup snapshot and download it and the most recent binlog. The application will then ask Consul for the IP address of the primary and set up replication from that primary before allowing the new replica to join the cluster.
 
-Replication in this architecture uses [Global Transaction Idenitifers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) so that replicas can autoconfigure their position within the binlog.
+Replication in this architecture uses [Global Transaction Identifiers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) so that replicas can autoconfigure their position within the binlog.
 
 ### Maintenance via `health` handler
 
@@ -56,31 +58,31 @@ By default, the primary performs the backup snapshots. For deployments with high
 
 ## Running the cluster
 
-Starting a new cluster is easy. Just run `docker-compose up -d` and in a few moments you'll have a running MySQL primary. Both the primary and replicas are described as a single `docker-compose` service. During startup, [ContainerPilot](http://containerpilot.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `onStart` handler.
+Starting a new cluster is easy once you have [your `_env` file set with the configuration details](#configuration), **just run `docker-compose up -d` and in a few moments you'll have a running MySQL primary**. Both the primary and replicas are described as a single `docker-compose` service. During startup, [ContainerPilot](http://containerpilot.io) will ask Consul if an existing primary has been created. If not, the node will initialize as a new primary and all future nodes will self-configure replication with the primary in their `preStart` handler.
 
-Run `docker-compose scale mysql=2` to add a replica (or more than one!). The replicas will automatically configure themselves to to replicate from the primary and will register themselves in Consul as replicas once they're ready.
+**Run `docker-compose scale mysql=2` to add a replica (or more than one!)**. The replicas will automatically configure themselves to to replicate from the primary and will register themselves in Consul as replicas once they're ready.
 
 ### Configuration
 
-Pass these variables in your environment or via an `_env` file.
+Pass these variables via an `_env` file. The included `setup.sh` can be used to test your Docker and Triton environment, and to encode the Manta SSH key in the `_env` file.
 
 - `MYSQL_USER`: this user will be set up as the default non-root user on the node
 - `MYSQL_PASSWORD`: this user will be set up as the default non-root user on the node
+- `MANTA_URL`: the full Manta endpoint URL. (ex. `https://us-east.manta.joyent.com`)
+- `MANTA_USER`: the Manta account name.
+- `MANTA_SUBUSER`: the Manta subuser account name, if any.
+- `MANTA_ROLE`: the Manta role name, if any.
+- `MANTA_KEY_ID`: the MD5-format ssh key id for the Manta account/subuser (ex. `1a:b8:30:2e:57:ce:59:1d:16:f6:19:97:f2:60:2b:3d`); the included `setup.sh` will encode this automatically
+- `MANTA_PRIVATE_KEY`: the private ssh key for the Manta account/subuser; the included `setup.sh` will encode this automatically
+- `MANTA_BUCKET`: the path on Manta where backups will be stored. (ex. `/myaccount/stor/triton-mysql`); the bucket must already exist and be writeable by the `MANTA_USER`/`MANTA_PRIVATE_KEY`
 
 These variables are optional but you most likely want them:
 
 - `MYSQL_REPL_USER`: this user will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_REPL_PASSWORD`: this password will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_DATABASE`: create this database on startup if it doesn't already exist. The `MYSQL_USER` user will be granted superuser access to that DB.
-- `MANTA_URL`: the full Manta endpoint URL. (ex. `https://us-east.manta.joyent.com`)
-- `MANTA_USER`: the Manta account name.
-- `MANTA_SUBUSER`: the Manta subuser account name, if any.
-- `MANTA_ROLE`: the Manta role name, if any.
-- `MANTA_KEY_ID`: the MD5-format ssh key id for the Manta account/subuser (ex. `1a:b8:30:2e:57:ce:59:1d:16:f6:19:97:f2:60:2b:3d`).
-- `MANTA_PRIVATE_KEY`: the private ssh key for the Manta account/subuser.
-- `MANTA_BUCKET`: the path on Manta where backups will be stored. (ex. `/myaccount/stor/triton-mysql`)
 - `LOG_LEVEL`: will set the logging level of the `triton-mysql.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels). In production you'll want this to be at `INFO` or above.
-- `TRITON_MYSQL_CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
+- `CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
 - `USE_STANDBY` tells the `triton-mysql.py` application to use a separate standby MySQL node to run backups. This might be useful if you have a very high write throughput on the primary node. Defaults to `no` (turn on with `yes` or `on`).
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
@@ -107,7 +109,9 @@ These variables will be written to `/etc/my.cnf`.
 
 ### Where to store data
 
-On Triton there's not need to use data volumes because the performance hit you normally take with overlay file systems in Linux doesn't happen with ZFS.
+This pattern automates the data management and makes container effectively stateless to the Docker daemon and schedulers. This is designed to maximize convenience and reliability by minimizing the external coordination needed to manage the database. The use of external volumes (`--volumes-from`, `-v`, etc.) is not recommended.
+
+On Triton, there's no need to use data volumes because the performance hit you normally take with overlay file systems in Linux doesn't happen with ZFS.
 
 ### Using an existing database
 
