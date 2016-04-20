@@ -175,8 +175,7 @@ class Manta(object):
         self.user = os.environ.get('MANTA_SUBUSER', None)
         self.role = os.environ.get('MANTA_ROLE', None)
         self.key_id = os.environ.get('MANTA_KEY_ID', None)
-        self.private_key = os.environ.get('MANTA_PRIVATE_KEY')
-        self.private_key = self.private_key.replace('#', '\n')
+        self.private_key = os.environ.get('MANTA_PRIVATE_KEY').replace('#', '\n')
         self.url = os.environ.get('MANTA_URL',
                                   'https://us-east.manta.joyent.com')
         self.bucket = os.environ.get('MANTA_BUCKET',
