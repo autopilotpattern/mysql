@@ -372,7 +372,12 @@ def on_change():
 def create_snapshot():
     log.debug('create_snapshot')
     try:
-        backup_lock = open('/tmp/{}'.format(BACKUP_TTL_KEY), 'r+')
+        lockfile_name = '/tmp/{}'.format(BACKUP_TTL_KEY)
+        backup_lock = open(lockfile_name, 'r+')
+    except IOError:
+        backup_lock = open(lockfile_name, 'w')
+
+    try:
         fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
 
         # we don't want .isoformat() here because of URL encoding
