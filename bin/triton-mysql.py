@@ -273,7 +273,6 @@ def health():
         # connection until this point
         ctx = dict(user=config.repl_user,
                    password=config.repl_password,
-                   database=config.mysql_db,
                    timeout=cp.config['services'][0]['ttl'])
         node.conn = wait_for_connection(**ctx)
 
@@ -290,8 +289,9 @@ def health():
         if node.is_primary() or node.is_standby():
             update_session_ttl()
 
-        if (node.is_snapshot_node() and
-                (is_binlog_stale(node.conn) or is_time_for_snapshot())):
+        if all(node.is_snapshot_node(),
+               (not is_backup_running()),
+               (is_binlog_stale(node.conn) or is_time_for_snapshot())):
             try:
                 write_snapshot(node.conn)
             except Exception as ex:
@@ -319,7 +319,6 @@ def on_change():
 
         ctx = dict(user=config.repl_user,
                    password=config.repl_password,
-                   database=config.mysql_db,
                    timeout=cp.config['services'][0]['ttl'])
         node.conn = wait_for_connection(**ctx)
 
@@ -372,34 +371,43 @@ def on_change():
 
 def create_snapshot():
     log.debug('create_snapshot')
+    try:
+        backup_lock = open('/tmp/{}'.format(BACKUP_TTL_KEY), 'r+')
+        fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
 
-    # we don't want .isoformat() here because of URL encoding
-    now = datetime.utcnow().strftime('%Y-%m-%dT%H-%M-%SZ')
-    backup_id = '{}-{}'.format(BACKUP_NAME, now)
+        # we don't want .isoformat() here because of URL encoding
+        now = datetime.utcnow().strftime('%Y-%m-%dT%H-%M-%SZ')
+        backup_id = '{}-{}'.format(BACKUP_NAME, now)
 
-    with open('/tmp/backup.tar', 'w') as f:
-        subprocess.check_call(['/usr/bin/innobackupex',
-                               '--user={}'.format(config.repl_user),
-                               '--password={}'.format(config.repl_password),
-                               '--no-timestamp',
-                               #'--compress',
-                               '--stream=tar',
-                               '/tmp/backup'], stdout=f)
+        with open('/tmp/backup.tar', 'w') as f:
+            subprocess.check_call(['/usr/bin/innobackupex',
+                                   '--user={}'.format(config.repl_user),
+                                   '--password={}'.format(config.repl_password),
+                                   '--no-timestamp',
+                                   #'--compress',
+                                   '--stream=tar',
+                                   '/tmp/backup'], stdout=f)
 
-    manta_config.put_backup(backup_id, '/tmp/backup.tar')
-    consul.kv.put(LAST_BACKUP_KEY, backup_id)
+        manta_config.put_backup(backup_id, '/tmp/backup.tar')
+        consul.kv.put(LAST_BACKUP_KEY, backup_id)
 
-    ctx = dict(user=config.repl_user,
-               password=config.repl_password,
-               database=config.mysql_db)
-    conn = wait_for_connection(**ctx)
+        ctx = dict(user=config.repl_user,
+                   password=config.repl_password)
+        conn = wait_for_connection(**ctx)
 
-    # write the filename of the binlog to Consul so that we know if
-    # we've rotated since the last backup.
-    # query lets IndexError bubble up -- something's broken
-    results = mysql_query(conn, 'SHOW MASTER STATUS', ())
-    binlog_file = results[0][0]
-    consul.kv.put(LAST_BINLOG_KEY, binlog_file)
+        # write the filename of the binlog to Consul so that we know if
+        # we've rotated since the last backup.
+        # query lets IndexError bubble up -- something's broken
+        results = mysql_query(conn, 'SHOW MASTER STATUS', ())
+        binlog_file = results[0][0]
+        consul.kv.put(LAST_BINLOG_KEY, binlog_file)
+
+    except IOError:
+        return False
+    finally:
+        fcntl.flock(backup_lock, fcntl.LOCK_UN)
+        backup_lock.close()
+
 
 
 # ---------------------------------------------------------
@@ -641,7 +649,7 @@ def create_repl_user(conn):
          'GRANT SUPER, REPLICATION SLAVE, RELOAD, LOCK TABLES, REPLICATION CLIENT '
          'ON *.* TO `{0}`@`%%`; '
          'FLUSH PRIVILEGES;'.format(config.repl_user)),
-        (config.repl_password))
+        (config.repl_password,))
 
 
 def set_timezone_info():
@@ -759,6 +767,17 @@ def restore_from_snapshot(filename):
                            '/tmp/backup'])
     take_ownership(config)
 
+def is_backup_running():
+    try:
+        backup_lock = open('/tmp/{}'.format(BACKUP_TTL_KEY), 'r+')
+        fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
+        fcntl.flock(backup_lock, fcntl.LOCK_UN)
+        return True
+    except IOError:
+        return False
+    finally:
+        backup_lock.close()
+
 def is_binlog_stale(conn):
     results = mysql_query(conn, 'SHOW MASTER STATUS', ())
     try:
@@ -793,6 +812,10 @@ def write_snapshot(conn):
     # create_snapshot call and return. The snapshot process will be
     # re-parented to ContainerPilot
     set_backup_ttl()
+    # TODO: we currently fork this off and return because otherwise
+    # health checks will fail during backups. When periodic tasks
+    # support lands in ContainerPilot we should move the snapshot
+    # to a task and avoid this mess.
     subprocess.Popen(['python', '/usr/local/bin/triton-mysql.py', 'create_snapshot'])
 
 def set_backup_ttl():
@@ -910,26 +933,21 @@ def get_from_consul(key):
 # ---------------------------------------------------------
 # utility functions
 
+# all exceptions bubble up to the caller
 def mysql_exec(conn, sql, params):
-    try:
-        with conn.cursor() as cursor:
-            log.debug(sql)
-            log.debug(params)
-            cursor.execute(sql, params)
-            conn.commit()
-    except Exception:
-        raise # re-raise so that we exit
+    with conn.cursor() as cursor:
+        log.debug(sql)
+        log.debug(params)
+        cursor.execute(sql, params)
+        conn.commit()
 
+# all exceptions bubble up to the caller
 def mysql_query(conn, sql, params):
-    try:
-        with conn.cursor() as cursor:
-            log.debug(sql)
-            log.debug(params)
-            cursor.execute(sql, params)
-            return cursor.fetchall()
-    except Exception:
-        raise # re-raise so that we exit
-
+    with conn.cursor() as cursor:
+        log.debug(sql)
+        log.debug(params)
+        cursor.execute(sql, params)
+        return cursor.fetchall()
 
 def get_ip(iface='eth0'):
     """
