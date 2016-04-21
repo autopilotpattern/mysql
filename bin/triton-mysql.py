@@ -59,7 +59,7 @@ SESSION_TTL = int(os.environ.get('SESSION_TTL', 60))
 # ---------------------------------------------------------
 
 class MySQLNode(object):
-    """ MySQLNode represents an instance of a mysql container. """
+    """ MySQLNode represents this instance of a MySQL container. """
 
     def __init__(self, name='', ip='', state=None):
         self.hostname = socket.gethostname()
@@ -68,24 +68,40 @@ class MySQLNode(object):
         self.state = state
         self.temp_pid = None
         self.conn = None
+        self.primary = None
+        self.standby = None
 
     def get_state(self):
         """
-        Return the node state if we have it, otherwise fetch
-        from Consul and cache the result.
+        Return the node state if we have it, otherwise fetch from Consul, cache
+        the result, and return it. We keep this in memory so it doesn't survive
+        restarts and so we can easily invalidate it. Returns:
+        - One of (PRIMARY, REPLICA, STANDBY) if the value has been set already.
+        - None if the primary has not been elected.
+        - None if the standby is in use and one has not been elected.
+        - Defaults to REPLICA.
         """
         if not self.state:
-            if self.hostname == get_primary_node():
+            self.primary = get_primary_node()
+            if self.name == self.primary:
                 self.state = PRIMARY
-            elif USE_STANDBY and (self.hostname == get_standby_node()):
-                self.state = STANDBY
+            elif USE_STANDBY:
+                self.standby = get_standby_node()
+                if self.name == self.standby:
+                    self.state = STANDBY
         return self.state
 
     def is_primary(self):
+        self.get_state()
         return self.state == PRIMARY
 
     def is_standby(self):
+        self.get_state()
         return self.state == STANDBY
+
+    def is_replica(self):
+        self.get_state()
+        return self.state != PRIMARY and self.state != STANDBY
 
     def is_snapshot_node(self):
         if USE_STANDBY:
@@ -238,21 +254,17 @@ class ContainerPilot(object):
 # ---------------------------------------------------------
 # Top-level functions called by ContainerPilot or forked by this program
 
-def on_start():
+def pre_start():
     """
-    Set up this node as the primary (if none yet exists), or the
-    standby (if none yet exists), or replica (default case)
+    MySQL must be running in order to execute most of our setup behavior
+    so we're just going to make sure the directory structures are in
+    place and then let the first health check handler take it from there
     """
-    primary = get_primary_node()
-    if not primary or primary == get_name():
-        run_as_primary()
-        return
-    elif USE_STANDBY:
-        standby = get_standby_node()
-        if not standby or standby == get_name():
-            run_as_standby()
-            return
-    run_as_replica()
+    if not os.path.isdir(os.path.join(config.datadir, 'mysql')):
+        if not initialize_db():
+            log.info('Skipping database setup.')
+    sys.exit(0)
+
 
 def health():
     """
@@ -268,6 +280,13 @@ def health():
         if cp.update():
             cp.reload()
             return
+
+        # Because we need MySQL up to finish initialization, we need to check
+        # for each pass thru the health check that we've done so. The happy
+        # path is to check a lock file against the node state (which has been
+        # set above) and immediately return when we discover the lock exists.
+        # Otherwise, we bootstrap the instance.
+        assert_initialized_for_state(node)
 
         # cp.reload() will exit early so no need to setup
         # connection until this point
@@ -289,6 +308,11 @@ def health():
         if node.is_primary() or node.is_standby():
             update_session_ttl()
 
+        # Create a snapshot and send it to the object store if this is the
+        # node and time to do so.
+        # TODO: move this section to a periodic task handler when that lands
+        # (ref https://github.com/joyent/containerpilot/pull/134) in
+        # ContainerPilot so we don't block the health check.
         if all(node.is_snapshot_node(),
                (not is_backup_running()),
                (is_binlog_stale(node.conn) or is_time_for_snapshot())):
@@ -300,6 +324,7 @@ def health():
                 # fails. The BACKUP_TTL_KEY will expire so we can alert
                 # on that externally.
                 log.exception(ex)
+        # / TODO: end of section to move to periodic task
 
         mysql_query(node.conn, 'SELECT 1', ())
         sys.exit(0)
@@ -418,24 +443,64 @@ def create_snapshot():
 # ---------------------------------------------------------
 # run_as_* functions determine the top-level behavior of a node
 
-def run_as_primary():
+
+def assert_initialized_for_state(node):
+    """
+    If the node has not yet been set up, find the correct state and initialize
+    for that state.
+    """
+    checks = {
+        PRIMARY: (run_as_primary, (STANDBY, REPLICA)),
+        STANDBY: (run_as_standby, (PRIMARY, REPLICA)),
+        REPLICA: (run_as_replica, (PRIMARY, STANDBY))
+    }
+
+    def set_lockdir(state, unlocks):
+        """
+        Creates a directory as a psuedo-lock file; we can't use flock
+        because we need to persist the lock between invocations and
+        reboots. Raises OSError if the file exists.
+        """
+        path = '/{}-init'.format(state) # TODO: find a safer spot for this
+        os.mkdir(path, 0700)
+        for unlock in unlocks:
+            upath = '/{}-init'.format(unlock)
+            if os.path.exists(upath):
+                os.rmdir(upath)
+
+    state = node.get_state()
+    if not state:
+        if not node.primary:
+            # primary hasn't yet been set in Consul
+            state = PRIMARY
+        elif USE_STANDBY and not node.standby:
+            # standby hasn't yet been set in Consul
+            state = STANDBY
+        else:
+            state = REPLICA
+
+    runner, unlocks = checks[state]
+    try:
+        set_lockdir(state, unlocks)
+        runner(node)
+        return False
+    except OSError:
+        return True
+
+
+
+def run_as_primary(node):
     """
     The overall workflow here is ported and reworked from the
     Oracle-provided Docker image:
     https://github.com/mysql/mysql-docker/blob/mysql-server/5.7/docker-entrypoint.sh
     """
-    node = MySQLNode(state=PRIMARY)
+    node.state = PRIMARY
     mark_as_primary(node)
     if os.path.isdir(os.path.join(config.datadir, 'mysql')):
-        node.temp_pid = start_temp_db(gtid_on=True)
         node.conn = wait_for_connection()
         stop_replication(node.conn) # in case this is a newly-promoted primary
     else:
-        if not initialize_db():
-            log.info('Skipping database setup.')
-            return
-        log.info('Continuing database setup.')
-        node.temp_pid = start_temp_db(gtid_on=True)
         set_timezone_info()
         node.conn = wait_for_connection()
         setup_root_user(node.conn)
@@ -450,34 +515,24 @@ def run_as_primary():
         # snapshot the primary so that we can bootstrap the standby.
         write_snapshot(node.conn)
 
-    cleanup_temp_db(node.temp_pid)
 
-
-def run_as_standby():
+def run_as_standby(node):
     """
     The startup of a standby is identical to the replica except that
     we mark ourselves as standby first.
     """
-    node = MySQLNode(state=STANDBY)
+    node.state = STANDBY
     mark_as_standby(node)
-    _run_replica(node)
+    run_as_replica(node)
 
-def run_as_replica():
-    node = MySQLNode(state=REPLICA)
-    _run_replica(node)
-
-def _run_replica(node):
+def run_as_replica(node):
     try:
         log.info('Setting up replication.')
         last_backup = has_snapshot()
         if last_backup:
             get_snapshot(last_backup)
             restore_from_snapshot(last_backup)
-        else:
-            log.info('Initializing as replica.')
-            initialize_db()
 
-        node.temp_pid = start_temp_db(gtid_on=True)
         ctx = dict(user=config.repl_user,
                    password=config.repl_password,
                    database=config.mysql_db)
@@ -485,41 +540,10 @@ def _run_replica(node):
         set_primary_for_replica(node.conn)
     except Exception as ex:
         log.exception(ex)
-    finally:
-        if node.temp_pid:
-            cleanup_temp_db(node.temp_pid)
 
 
 # ---------------------------------------------------------
 # bootstrapping functions
-
-
-def start_temp_db(gtid_on=False):
-    """ Return the PID of the mysqld process """
-    args = ['mysqld',
-            '--user=mysql',
-            '--datadir={}'.format(config.datadir),
-            '--skip-networking',
-            '--skip-slave-start']
-    if gtid_on:
-        args.extend(['--gtid-mode=ON',
-                     '--enforce-gtid-consistency=ON',
-                     '--log-bin=mysql-bin',
-                     '--log_slave_updates=ON'])
-
-    pid = subprocess.Popen(args).pid
-    log.info('Running temporary bootstrap mysqld (PID %s)', pid)
-    return pid
-
-def cleanup_temp_db(pid):
-    """
-    Clean up the temporary mysqld service that we use for bootstrapping
-    """
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
-        log.warn('Failed to close temp DB at PID %s', pid)
-
 
 def wait_for_connection(user='root', password=None, database=None, timeout=30):
     while timeout > 0:
@@ -555,8 +579,8 @@ def mark_as_primary(node):
     session_id = get_session()
     if not mark_with_session(PRIMARY_KEY, node.hostname, session_id):
         log.error('Tried to mark node primary but primary exists, '
-                  'restarting bootstrap process.')
-        on_start()
+                  'exiting for retry on next check.')
+        sys.exit(1)
     node.state = PRIMARY
 
 def initialize_db():
@@ -702,7 +726,7 @@ def mark_as_standby(node):
     if not mark_with_session(STANDBY_KEY, node.hostname, session_id):
         log.error('Tried to mark node standby but standby exists, '
                   'restarting bootstrap process.')
-        on_start()
+        pre_start()
     node.state = STANDBY
 
 def stop_replication(conn):
@@ -986,4 +1010,4 @@ if __name__ == '__main__':
     else:
         # default behavior will be to start mysqld, running the
         # initialization if required
-        on_start()
+        pre_start()
