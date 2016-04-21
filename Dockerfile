@@ -15,7 +15,8 @@ RUN curl -Ls -o get-pip.py https://bootstrap.pypa.io/get-pip.py && \
     pip install \
         PyMySQL==0.6.7 \
         python-Consul==0.4.7 \
-        manta==2.5.0
+        manta==2.5.0 \
+        mock==2.0.0
 
 # Add ContainerPilot and set its configuration file path
 ENV CONTAINERPILOT_VER 2.0.1

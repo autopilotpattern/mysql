@@ -147,6 +147,15 @@ envcheck() {
     fi
 }
 
+# runs unit tests inside a Docker container
+test() {
+    docker run -it --rm \
+           -v $(pwd)/bin:/usr/local/bin \
+           -w /usr/local/bin \
+           my_mysql \
+           python test.py
+}
+
 # ---------------------------------------------------
 # parse arguments
 
