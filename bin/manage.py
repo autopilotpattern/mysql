@@ -420,7 +420,7 @@ def create_snapshot():
                                    #'--compress',
                                    '--stream=tar',
                                    '/tmp/backup'], stdout=f)
-
+        log.debug('snapshot completed, uploading to object store')
         manta_config.put_backup(backup_id, '/tmp/backup.tar')
         consul.kv.put(LAST_BACKUP_KEY, backup_id)
 
@@ -815,9 +815,11 @@ def is_backup_running():
     try:
         fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
         fcntl.flock(backup_lock, fcntl.LOCK_UN)
-        return True
-    except IOError:
+        log.debug('is_backup_running: False')
         return False
+    except IOError:
+        log.debug('is_backup_running: True')
+        return True
     finally:
         backup_lock.close()
 
@@ -827,8 +829,11 @@ def is_binlog_stale(conn):
         binlog_file = results[0][0]
         last_binlog_file = get_from_consul(LAST_BINLOG_KEY)
     except IndexError:
+        log.debug('is_binlog_stale: True (no LAST_BINLOG_KEY)')
         return True
-    return binlog_file != last_binlog_file
+    is_stale = binlog_file != last_binlog_file
+    log.debug('is_binlog_stale: %s', is_stale)
+    return is_stale
 
 def is_time_for_snapshot():
     """ Check if it's time to do a snapshot """
@@ -837,9 +842,12 @@ def is_time_for_snapshot():
         check = consul.agent.checks()[BACKUP_TTL_KEY]
         log.debug(check)
         if check['Status'] == 'passing':
+            log.debug('is_time_for_snapshot: False')
             return False
+        log.debug('is_time_for_snapshot: True')
         return True
     except KeyError:
+        log.debug('is_time_for_snapshot: True')
         return True
 
 def write_snapshot(conn):
@@ -859,7 +867,7 @@ def write_snapshot(conn):
     # health checks will fail during backups. When periodic tasks
     # support lands in ContainerPilot we should move the snapshot
     # to a task and avoid this mess.
-    subprocess.Popen(['python', '/usr/local/bin/triton-mysql.py', 'create_snapshot'])
+    subprocess.Popen(['python', '/usr/local/bin/manage.py', 'create_snapshot'])
 
 def set_backup_ttl():
     """
