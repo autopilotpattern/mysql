@@ -1,6 +1,8 @@
 from __future__ import print_function
 from datetime import datetime
 import fcntl
+from functools import wraps
+import inspect
 import json
 import logging
 import os
@@ -21,7 +23,7 @@ import manta
 logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(message)s',
                     stream=sys.stdout,
                     level=logging.getLevelName(
-                        os.environ.get('LOG_LEVEL', 'DEBUG')))
+                        os.environ.get('LOG_LEVEL', 'INFO')))
 requests_logger = logging.getLogger('requests')
 requests_logger.setLevel(logging.WARN)
 
@@ -30,7 +32,36 @@ requests_logger.setLevel(logging.WARN)
 manta_logger = logging.getLogger('manta')
 manta_logger.setLevel(logging.INFO)
 
-log = logging.getLogger('triton-mysql')
+log = logging.getLogger('manage.py')
+
+
+def debug(fn):
+    """
+    Function/method decorator to trace calls via debug logging.
+    Is a pass-thru if we're not at LOG_LEVEL=DEBUG. Normally this
+    would have a lot of perf impact but this application doesn't
+    have significant throughput.
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        name = '{}{}'.format((len(inspect.stack()) * " "), fn.__name__)
+        log.debug('%s' % name)
+        out = apply(fn, args, kwargs)
+        log.debug('%s: %s', name, out)
+        return out
+    return wrapper
+
+def get_environ(key, default):
+    """
+    Gets an environment variable and trims away comments and whitespace.
+    """
+    val = os.environ.get(key, default)
+    try:
+        val = val.split('#')[0]
+        val = val.strip()
+    finally:
+        # just swallow AttributeErrors for non-strings
+        return val
 
 consul = pyconsul.Consul(host=os.environ.get('CONSUL', 'consul'))
 config = None
@@ -42,24 +73,24 @@ REPLICA = 'mysql'
 
 # determines whether we use the primary for snapshots or a separate standby
 # replica that doesn't take part in serving queries.
-USE_STANDBY = os.environ.get('USE_STANDBY', False)
+USE_STANDBY = get_environ('USE_STANDBY', False)
 
 # consts for keys
-PRIMARY_KEY = os.environ.get('PRIMARY_KEY', 'mysql-primary')
-STANDBY_KEY = os.environ.get('STANDBY_KEY', 'mysql-standby')
-BACKUP_TTL_KEY = os.environ.get('BACKUP_TTL_KEY', 'mysql-backup-run')
-LAST_BACKUP_KEY = os.environ.get('LAST_BACKUP_KEY', 'mysql-last-backup')
-LAST_BINLOG_KEY = os.environ.get('LAST_BINLOG_KEY', 'mysql-last-binlog')
-BACKUP_NAME = os.environ.get('BACKUP_NAME', 'mysql-backup')
-BACKUP_TTL = '{}s'.format(os.environ.get('BACKUP_TTL', 86400)) # every 24 hours
-SESSION_CACHE_FILE = os.environ.get('SESSION_CACHE_FILE', '/tmp/mysql-session')
-SESSION_NAME = os.environ.get('SESSION_NAME', 'mysql-primary-lock')
-SESSION_TTL = int(os.environ.get('SESSION_TTL', 60))
+PRIMARY_KEY = get_environ('PRIMARY_KEY', 'mysql-primary')
+STANDBY_KEY = get_environ('STANDBY_KEY', 'mysql-standby')
+BACKUP_TTL_KEY = get_environ('BACKUP_TTL_KEY', 'mysql-backup-run')
+LAST_BACKUP_KEY = get_environ('LAST_BACKUP_KEY', 'mysql-last-backup')
+LAST_BINLOG_KEY = get_environ('LAST_BINLOG_KEY', 'mysql-last-binlog')
+BACKUP_NAME = get_environ('BACKUP_NAME', 'mysql-backup')
+BACKUP_TTL = '{}s'.format(get_environ('BACKUP_TTL', 86400)) # every 24 hours
+SESSION_CACHE_FILE = get_environ('SESSION_CACHE_FILE', '/tmp/mysql-session')
+SESSION_NAME = get_environ('SESSION_NAME', 'mysql-primary-lock')
+SESSION_TTL = int(get_environ('SESSION_TTL', 60))
 
 # ---------------------------------------------------------
 
 class MySQLNode(object):
-    """ MySQLNode represents an instance of a mysql container. """
+    """ MySQLNode represents this instance of a MySQL container. """
 
     def __init__(self, name='', ip='', state=None):
         self.hostname = socket.gethostname()
@@ -68,24 +99,40 @@ class MySQLNode(object):
         self.state = state
         self.temp_pid = None
         self.conn = None
+        self.primary = None
+        self.standby = None
 
     def get_state(self):
         """
-        Return the node state if we have it, otherwise fetch
-        from Consul and cache the result.
+        Return the node state if we have it, otherwise fetch from Consul, cache
+        the result, and return it. We keep this in memory so it doesn't survive
+        restarts and so we can easily invalidate it. Returns:
+        - One of (PRIMARY, REPLICA, STANDBY) if the value has been set already.
+        - None if the primary has not been elected.
+        - None if the standby is in use and one has not been elected.
+        - Defaults to REPLICA.
         """
         if not self.state:
-            if self.hostname == get_primary_node():
+            self.primary = get_primary_node()
+            if self.hostname == self.primary:
                 self.state = PRIMARY
-            elif USE_STANDBY and (self.hostname == get_standby_node()):
-                self.state = STANDBY
+            elif USE_STANDBY:
+                self.standby = get_standby_node()
+                if self.hostname == self.standby:
+                    self.state = STANDBY
         return self.state
 
     def is_primary(self):
+        self.get_state()
         return self.state == PRIMARY
 
     def is_standby(self):
+        self.get_state()
         return self.state == STANDBY
+
+    def is_replica(self):
+        self.get_state()
+        return self.state != PRIMARY and self.state != STANDBY
 
     def is_snapshot_node(self):
         if USE_STANDBY:
@@ -102,17 +149,17 @@ class MySQLConfig(object):
     """
 
     def __init__(self):
-        self.mysql_db = os.environ.get('MYSQL_DATABASE', None)
-        self.mysql_user = os.environ.get('MYSQL_USER', None)
-        self.mysql_password = os.environ.get('MYSQL_PASSWORD', None)
-        self.mysql_root_password = os.environ.get('MYSQL_ROOT_PASSWORD', '')
+        self.mysql_db = get_environ('MYSQL_DATABASE', None)
+        self.mysql_user = get_environ('MYSQL_USER', None)
+        self.mysql_password = get_environ('MYSQL_PASSWORD', None)
+        self.mysql_root_password = get_environ('MYSQL_ROOT_PASSWORD', '')
         self.mysql_random_root_password = self._parse_environ_bool(
             'MYSQL_RANDOM_ROOT_PASSWORD', True)
         self.mysql_onetime_password = self._parse_environ_bool(
             'MYSQL_ONETIME_PASSWORD', False)
-        self.repl_user = os.environ.get('MYSQL_REPL_USER', None)
-        self.repl_password = os.environ.get('MYSQL_REPL_PASSWORD', None)
-        self.datadir = os.environ.get('MYSQL_DATADIR', '/var/lib/mysql')
+        self.repl_user = get_environ('MYSQL_REPL_USER', None)
+        self.repl_password = get_environ('MYSQL_REPL_PASSWORD', None)
+        self.datadir = get_environ('MYSQL_DATADIR', '/var/lib/mysql')
 
         # make sure that if we've pulled in an external data volume that
         # the mysql user can read it
@@ -123,7 +170,7 @@ class MySQLConfig(object):
         Parse environment variable strings like "yes/no", "on/off",
         "true/false", "1/0" into a bool.
         """
-        val = os.environ.get(var, default)
+        val = get_environ(var, default)
         try:
             return bool(int(val))
         except ValueError:
@@ -142,7 +189,7 @@ class MySQLConfig(object):
 
         # replace innodb_buffer_pool_size value from environment
         # or use a sensible default (70% of available physical memory)
-        innodb_buffer_pool_size = int(os.environ.get('INNODB_BUFFER_POOL_SIZE', 0))
+        innodb_buffer_pool_size = int(get_environ('INNODB_BUFFER_POOL_SIZE', 0))
         if not innodb_buffer_pool_size:
             with open('/proc/meminfo', 'r') as memInfoFile:
                 memInfo = memInfoFile.read()
@@ -171,15 +218,17 @@ class Manta(object):
     """
 
     def __init__(self):
-        self.account = os.environ.get('MANTA_USER', None)
-        self.user = os.environ.get('MANTA_SUBUSER', None)
-        self.role = os.environ.get('MANTA_ROLE', None)
-        self.key_id = os.environ.get('MANTA_KEY_ID', None)
+        self.account = get_environ('MANTA_USER', None)
+        self.user = get_environ('MANTA_SUBUSER', None)
+        self.role = get_environ('MANTA_ROLE', None)
+        self.key_id = get_environ('MANTA_KEY_ID', None)
+        self.url = get_environ('MANTA_URL',
+                               'https://us-east.manta.joyent.com')
+        self.bucket = get_environ('MANTA_BUCKET',
+                                  '/{}/stor'.format(self.account))
+        # we don't want to use get_environ here because we have a different
+        # de-munging to do
         self.private_key = os.environ.get('MANTA_PRIVATE_KEY').replace('#', '\n')
-        self.url = os.environ.get('MANTA_URL',
-                                  'https://us-east.manta.joyent.com')
-        self.bucket = os.environ.get('MANTA_BUCKET',
-                                     '/{}/stor'.format(self.account))
 
         self.signer = manta.PrivateKeySigner(self.key_id, self.private_key)
         self.client = manta.MantaClient(self.url,
@@ -213,10 +262,11 @@ class ContainerPilot(object):
         # TODO: we should make sure we can support JSON-in-env-var
         # the same as ContainerPilot itself
         self.node = node
-        self.path = os.environ.get('CONTAINERPILOT').replace('file://', '')
+        self.path = get_environ('CONTAINERPILOT', None).replace('file://', '')
         with open(self.path, 'r') as f:
             self.config = json.loads(f.read())
 
+    @debug
     def update(self):
         state = self.node.get_state()
         if state and self.config['services'][0]['name'] != state:
@@ -224,9 +274,9 @@ class ContainerPilot(object):
             self.render()
             return True
 
+    @debug
     def render(self):
         new_config = json.dumps(self.config)
-        log.info(new_config)
         with open(self.path, 'w') as f:
             f.write(new_config)
 
@@ -238,22 +288,23 @@ class ContainerPilot(object):
 # ---------------------------------------------------------
 # Top-level functions called by ContainerPilot or forked by this program
 
-def on_start():
+def pre_start():
     """
-    Set up this node as the primary (if none yet exists), or the
-    standby (if none yet exists), or replica (default case)
+    MySQL must be running in order to execute most of our setup behavior
+    so we're just going to make sure the directory structures are in
+    place and then let the first health check handler take it from there
     """
-    primary = get_primary_node()
-    if not primary or primary == get_name():
-        run_as_primary()
-        return
-    elif USE_STANDBY:
-        standby = get_standby_node()
-        if not standby or standby == get_name():
-            run_as_standby()
-            return
-    run_as_replica()
+    if not os.path.isdir(os.path.join(config.datadir, 'mysql')):
+        last_backup = has_snapshot()
+        if last_backup:
+            get_snapshot(last_backup)
+            restore_from_snapshot(last_backup)
+        else:
+            if not initialize_db():
+                log.info('Skipping database setup.')
+    sys.exit(0)
 
+@debug
 def health():
     """
     Run a simple health check. Also acts as a check for whether the
@@ -261,13 +312,19 @@ def health():
     changed externally), or if we need to make a backup because the
     backup TTL has expired.
     """
-    log.debug('health check fired.')
     try:
         node = MySQLNode()
         cp = ContainerPilot(node)
         if cp.update():
             cp.reload()
             return
+
+        # Because we need MySQL up to finish initialization, we need to check
+        # for each pass thru the health check that we've done so. The happy
+        # path is to check a lock file against the node state (which has been
+        # set above) and immediately return when we discover the lock exists.
+        # Otherwise, we bootstrap the instance.
+        was_ready = assert_initialized_for_state(node)
 
         # cp.reload() will exit early so no need to setup
         # connection until this point
@@ -289,9 +346,14 @@ def health():
         if node.is_primary() or node.is_standby():
             update_session_ttl()
 
-        if all(node.is_snapshot_node(),
-               (not is_backup_running()),
-               (is_binlog_stale(node.conn) or is_time_for_snapshot())):
+        # Create a snapshot and send it to the object store if this is the
+        # node and time to do so.
+        # TODO: move this section to a periodic task handler when that lands
+        # (ref https://github.com/joyent/containerpilot/pull/134) in
+        # ContainerPilot so we don't block the health check.
+        if all((node.is_snapshot_node(),
+                (not is_backup_running()),
+                (is_binlog_stale(node.conn) or is_time_for_snapshot()))):
             try:
                 write_snapshot(node.conn)
             except Exception as ex:
@@ -300,16 +362,15 @@ def health():
                 # fails. The BACKUP_TTL_KEY will expire so we can alert
                 # on that externally.
                 log.exception(ex)
+        # / TODO: end of section to move to periodic task
 
         mysql_query(node.conn, 'SELECT 1', ())
-        sys.exit(0)
     except Exception as ex:
         log.exception(ex)
         sys.exit(1)
 
-
+@debug
 def on_change():
-    log.debug('on_change check fired.')
     try:
         node = MySQLNode()
         cp = ContainerPilot(node)
@@ -345,7 +406,7 @@ def on_change():
                     return
                 else:
                     # we lost the race to lock the session for ourselves
-                    log.debug('could not lock session')
+                    log.info('could not lock session')
                     time.sleep(1)
                     continue
 
@@ -368,9 +429,8 @@ def on_change():
             time.sleep(1) # avoid hammering Consul
             continue
 
-
+@debug
 def create_snapshot():
-    log.debug('create_snapshot')
     try:
         lockfile_name = '/tmp/{}'.format(BACKUP_TTL_KEY)
         backup_lock = open(lockfile_name, 'r+')
@@ -392,8 +452,10 @@ def create_snapshot():
                                    #'--compress',
                                    '--stream=tar',
                                    '/tmp/backup'], stdout=f)
-
+        log.info('snapshot completed, uploading to object store')
         manta_config.put_backup(backup_id, '/tmp/backup.tar')
+
+        log.debug('snapshot uploaded, setting LAST_BACKUP_KEY in Consul')
         consul.kv.put(LAST_BACKUP_KEY, backup_id)
 
         ctx = dict(user=config.repl_user,
@@ -405,12 +467,15 @@ def create_snapshot():
         # query lets IndexError bubble up -- something's broken
         results = mysql_query(conn, 'SHOW MASTER STATUS', ())
         binlog_file = results[0][0]
+        log.debug('setting LAST_BINLOG_KEY in Consul')
         consul.kv.put(LAST_BINLOG_KEY, binlog_file)
 
     except IOError:
         return False
     finally:
+        log.debug('unlocking backup lock')
         fcntl.flock(backup_lock, fcntl.LOCK_UN)
+        log.debug('closing backup file')
         backup_lock.close()
 
 
@@ -418,66 +483,99 @@ def create_snapshot():
 # ---------------------------------------------------------
 # run_as_* functions determine the top-level behavior of a node
 
-def run_as_primary():
+@debug
+def assert_initialized_for_state(node):
+    """
+    If the node has not yet been set up, find the correct state and initialize
+    for that state.
+    """
+    checks = {
+        PRIMARY: (run_as_primary, (STANDBY, REPLICA)),
+        STANDBY: (run_as_standby, (PRIMARY, REPLICA)),
+        REPLICA: (run_as_replica, (PRIMARY, STANDBY))
+    }
+
+    def set_lockdir(state, unlocks):
+        """
+        Creates a directory as a psuedo-lock file; we can't use flock
+        because we need to persist the lock between invocations and
+        reboots. Raises OSError if the file exists.
+        """
+        path = '/{}-init'.format(state) # TODO: find a safer spot for this
+        os.mkdir(path, 0700)
+        for unlock in unlocks:
+            upath = '/{}-init'.format(unlock)
+            if os.path.exists(upath):
+                os.rmdir(upath)
+
+    state = node.get_state()
+    if not state:
+        if not node.primary:
+            # primary hasn't yet been set in Consul
+            state = PRIMARY
+        elif USE_STANDBY and not node.standby:
+            # standby hasn't yet been set in Consul
+            state = STANDBY
+        else:
+            state = REPLICA
+    node.state = state
+
+    runner, unlocks = checks[state]
+    try:
+        set_lockdir(state, unlocks)
+        runner(node)
+        return False
+    except OSError:
+        return True
+
+
+@debug
+def run_as_primary(node):
     """
     The overall workflow here is ported and reworked from the
     Oracle-provided Docker image:
     https://github.com/mysql/mysql-docker/blob/mysql-server/5.7/docker-entrypoint.sh
     """
-    node = MySQLNode(state=PRIMARY)
+    node.state = PRIMARY
     mark_as_primary(node)
-    if os.path.isdir(os.path.join(config.datadir, 'mysql')):
-        node.temp_pid = start_temp_db(gtid_on=True)
-        node.conn = wait_for_connection()
-        stop_replication(node.conn) # in case this is a newly-promoted primary
-    else:
-        if not initialize_db():
-            log.info('Skipping database setup.')
-            return
-        log.info('Continuing database setup.')
-        node.temp_pid = start_temp_db(gtid_on=True)
+
+    node.conn = wait_for_connection()
+    if node.conn:
+        # if we can make a connection w/o a password then this is the
+        # first pass
         set_timezone_info()
-        node.conn = wait_for_connection()
         setup_root_user(node.conn)
         create_db(node.conn)
         create_default_user(node.conn)
         create_repl_user(node.conn)
         run_external_scripts('/etc/initdb.d')
         expire_root_password(node.conn)
+    else:
+        ctx = dict(user=config.repl_user,
+                   password=config.repl_password,
+                   database=config.mysql_db)
+        node.conn = wait_for_connection(**ctx)
+        stop_replication(node.conn) # in case this is a newly-promoted primary
 
     if USE_STANDBY:
         # if we're using a standby instance then we need to first
         # snapshot the primary so that we can bootstrap the standby.
         write_snapshot(node.conn)
 
-    cleanup_temp_db(node.temp_pid)
-
-
-def run_as_standby():
+@debug
+def run_as_standby(node):
     """
     The startup of a standby is identical to the replica except that
     we mark ourselves as standby first.
     """
-    node = MySQLNode(state=STANDBY)
+    node.state = STANDBY
     mark_as_standby(node)
-    _run_replica(node)
+    run_as_replica(node)
 
-def run_as_replica():
-    node = MySQLNode(state=REPLICA)
-    _run_replica(node)
-
-def _run_replica(node):
+@debug
+def run_as_replica(node):
     try:
         log.info('Setting up replication.')
-        last_backup = has_snapshot()
-        if last_backup:
-            get_snapshot(last_backup)
-            restore_from_snapshot(last_backup)
-        else:
-            log.info('Initializing as replica.')
-            initialize_db()
-
-        node.temp_pid = start_temp_db(gtid_on=True)
         ctx = dict(user=config.repl_user,
                    password=config.repl_password,
                    database=config.mysql_db)
@@ -485,41 +583,10 @@ def _run_replica(node):
         set_primary_for_replica(node.conn)
     except Exception as ex:
         log.exception(ex)
-    finally:
-        if node.temp_pid:
-            cleanup_temp_db(node.temp_pid)
 
 
 # ---------------------------------------------------------
 # bootstrapping functions
-
-
-def start_temp_db(gtid_on=False):
-    """ Return the PID of the mysqld process """
-    args = ['mysqld',
-            '--user=mysql',
-            '--datadir={}'.format(config.datadir),
-            '--skip-networking',
-            '--skip-slave-start']
-    if gtid_on:
-        args.extend(['--gtid-mode=ON',
-                     '--enforce-gtid-consistency=ON',
-                     '--log-bin=mysql-bin',
-                     '--log_slave_updates=ON'])
-
-    pid = subprocess.Popen(args).pid
-    log.info('Running temporary bootstrap mysqld (PID %s)', pid)
-    return pid
-
-def cleanup_temp_db(pid):
-    """
-    Clean up the temporary mysqld service that we use for bootstrapping
-    """
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
-        log.warn('Failed to close temp DB at PID %s', pid)
-
 
 def wait_for_connection(user='root', password=None, database=None, timeout=30):
     while timeout > 0:
@@ -537,8 +604,8 @@ def wait_for_connection(user='root', password=None, database=None, timeout=30):
                 raise
             time.sleep(1)
 
+@debug
 def mark_with_session(key, val, session_id, timeout=10):
-    log.debug('mark_with_session')
     while timeout > 0:
         try:
             return consul.kv.put(key, val, acquire=session_id)
@@ -555,8 +622,8 @@ def mark_as_primary(node):
     session_id = get_session()
     if not mark_with_session(PRIMARY_KEY, node.hostname, session_id):
         log.error('Tried to mark node primary but primary exists, '
-                  'restarting bootstrap process.')
-        on_start()
+                  'exiting for retry on next check.')
+        sys.exit(1)
     node.state = PRIMARY
 
 def initialize_db():
@@ -702,7 +769,7 @@ def mark_as_standby(node):
     if not mark_with_session(STANDBY_KEY, node.hostname, session_id):
         log.error('Tried to mark node standby but standby exists, '
                   'restarting bootstrap process.')
-        on_start()
+        pre_start()
     node.state = STANDBY
 
 def stop_replication(conn):
@@ -743,18 +810,21 @@ def update_session_ttl(session_id=None):
         session_id = get_session()
     consul.session.renew(session_id)
 
-
+@debug
 def has_snapshot():
     """ Ask Consul for 'last backup' key """
-    log.debug('has_snapshot')
-    last_backup_id = get_from_consul(LAST_BACKUP_KEY)
-    return last_backup_id
+    try:
+        last_backup_id = get_from_consul(LAST_BACKUP_KEY)
+        return last_backup_id
+    except pyconsul.base.ConsulException:
+        # Consul isn't up yet
+        return None
 
+@debug
 def get_snapshot(filename):
     """
     Pull files from Manta; let exceptions bubble up to the caller
     """
-    log.debug('get_snapshot')
     try:
         os.mkdir('/tmp/backup', 0770)
     except OSError:
@@ -772,17 +842,23 @@ def restore_from_snapshot(filename):
                            '/tmp/backup'])
     take_ownership(config)
 
+@debug
 def is_backup_running():
     try:
-        backup_lock = open('/tmp/{}'.format(BACKUP_TTL_KEY), 'r+')
+        lockfile_name = '/tmp/{}'.format(BACKUP_TTL_KEY)
+        backup_lock = open(lockfile_name, 'r+')
+    except IOError:
+        backup_lock = open(lockfile_name, 'w')
+    try:
         fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
         fcntl.flock(backup_lock, fcntl.LOCK_UN)
-        return True
-    except IOError:
         return False
+    except IOError:
+        return True
     finally:
         backup_lock.close()
 
+@debug
 def is_binlog_stale(conn):
     results = mysql_query(conn, 'SHOW MASTER STATUS', ())
     try:
@@ -792,25 +868,23 @@ def is_binlog_stale(conn):
         return True
     return binlog_file != last_binlog_file
 
+@debug
 def is_time_for_snapshot():
     """ Check if it's time to do a snapshot """
-    log.debug('is_time_for_snapshot')
     try:
         check = consul.agent.checks()[BACKUP_TTL_KEY]
-        log.debug(check)
         if check['Status'] == 'passing':
             return False
         return True
     except KeyError:
         return True
 
+@debug
 def write_snapshot(conn):
     """
     Create a new snapshot, upload it to Manta, and register it
     with Consul. Exceptions bubble up to caller
     """
-    log.debug('write_snapshot')
-
 
     # we set the BACKUP_TTL before we run the backup so that we don't
     # have multiple health checks running concurrently. We then fork the
@@ -821,25 +895,21 @@ def write_snapshot(conn):
     # health checks will fail during backups. When periodic tasks
     # support lands in ContainerPilot we should move the snapshot
     # to a task and avoid this mess.
-    subprocess.Popen(['python', '/usr/local/bin/triton-mysql.py', 'create_snapshot'])
+    subprocess.Popen(['python', '/usr/local/bin/manage.py', 'create_snapshot'])
 
+@debug
 def set_backup_ttl():
     """
     Write a TTL check for the BACKUP_TTL key.
     Exceptions are allowed to bubble up to the caller
     """
-    log.debug('set_backup_ttl')
-    log.debug(BACKUP_TTL_KEY)
     try:
         pass_check = consul.agent.check.ttl_pass(BACKUP_TTL_KEY)
-        log.debug(pass_check)
         if not pass_check:
-            log.debug('no pass_check!')
             consul.agent.check.register(name=BACKUP_TTL_KEY,
                                         check=pyconsul.Check.ttl(BACKUP_TTL),
                                         check_id=BACKUP_TTL_KEY)
             pass_check = consul.agent.check.ttl_pass(BACKUP_TTL_KEY)
-            log.debug(pass_check)
             if not pass_check:
                 raise Exception('Could not register health check for {}'
                                 .format(BACKUP_TTL_KEY))
@@ -848,13 +918,13 @@ def set_backup_ttl():
 
     return
 
+@debug
 def set_primary_for_replica(conn):
     """
     Set up GTID-based replication to the primary; once this is set the
     replica will automatically try to catch up with the primary's last
     transactions.
     """
-    log.debug('set_primary_for_replica')
     primary = get_primary_host()
     sql = ('CHANGE MASTER TO '
            'MASTER_HOST           = %s, '
@@ -867,19 +937,18 @@ def set_primary_for_replica(conn):
            'START SLAVE;')
     mysql_exec(conn, sql, (primary, config.repl_user, config.repl_password,))
 
-
+@debug
 def get_primary_host(primary=None, timeout=30):
     """
     Query Consul for healthy mysql nodes and check their ServiceID vs
     the primary node. Returns the IP address of the matching node or
     raises an exception.
     """
-    log.debug('get_primary_host')
     if not primary:
         primary = get_primary_node()
     if not primary:
         raise Exception('Tried replication setup but could not find primary.')
-    log.debug('Checking if primary (%s) is healthy...', primary)
+    log.debug('checking if primary (%s) is healthy...', primary)
 
     while timeout > 0:
         try:
@@ -894,8 +963,8 @@ def get_primary_host(primary=None, timeout=30):
     raise Exception('Tried replication setup, but primary is '
                     'set and not healthy.')
 
+@debug
 def get_primary_node(timeout=10):
-    log.debug('get_primary_node')
     while timeout > 0:
         try:
             result = consul.kv.get(PRIMARY_KEY)
@@ -986,4 +1055,4 @@ if __name__ == '__main__':
     else:
         # default behavior will be to start mysqld, running the
         # initialization if required
-        on_start()
+        pre_start()

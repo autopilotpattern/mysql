@@ -1,11 +1,11 @@
 {
   "consul": "{{ .CONSUL }}:8500",
-  "preStart": "python /usr/local/bin/triton-mysql.py",
+  "preStart": "python /usr/local/bin/manage.py",
   "services": [
     {
       "name": "mysql",
       "port": 3306,
-      "health": "python /usr/local/bin/triton-mysql.py health",
+      "health": "python /usr/local/bin/manage.py health",
       "poll": 5,
       "ttl": 25
     }
@@ -14,7 +14,7 @@
     {
       "name": "mysql-primary",
       "poll": 10,
-      "onChange": "python /usr/local/bin/triton-mysql.py on_change"
+      "onChange": "python /usr/local/bin/manage.py on_change"
     }
   ]
 }
