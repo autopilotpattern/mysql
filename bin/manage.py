@@ -1,6 +1,8 @@
 from __future__ import print_function
 from datetime import datetime
 import fcntl
+from functools import wraps
+import inspect
 import json
 import logging
 import os
@@ -21,7 +23,7 @@ import manta
 logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(message)s',
                     stream=sys.stdout,
                     level=logging.getLevelName(
-                        os.environ.get('LOG_LEVEL', 'DEBUG')))
+                        os.environ.get('LOG_LEVEL', 'INFO')))
 requests_logger = logging.getLogger('requests')
 requests_logger.setLevel(logging.WARN)
 
@@ -30,7 +32,36 @@ requests_logger.setLevel(logging.WARN)
 manta_logger = logging.getLogger('manta')
 manta_logger.setLevel(logging.INFO)
 
-log = logging.getLogger('manage')
+log = logging.getLogger('manage.py')
+
+
+def debug(fn):
+    """
+    Function/method decorator to trace calls via debug logging.
+    Is a pass-thru if we're not at LOG_LEVEL=DEBUG. Normally this
+    would have a lot of perf impact but this application doesn't
+    have significant throughput.
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        name = '{}{}'.format((len(inspect.stack()) * " "), fn.__name__)
+        log.debug('%s' % name)
+        out = apply(fn, args, kwargs)
+        log.debug('%s: %s', name, out)
+        return out
+    return wrapper
+
+def get_environ(key, default):
+    """
+    Gets an environment variable and trims away comments and whitespace.
+    """
+    val = os.environ.get(key, default)
+    try:
+        val = val.split('#')[0]
+        val = val.strip()
+    finally:
+        # just swallow AttributeErrors for non-strings
+        return val
 
 consul = pyconsul.Consul(host=os.environ.get('CONSUL', 'consul'))
 config = None
@@ -42,19 +73,19 @@ REPLICA = 'mysql'
 
 # determines whether we use the primary for snapshots or a separate standby
 # replica that doesn't take part in serving queries.
-USE_STANDBY = os.environ.get('USE_STANDBY', False)
+USE_STANDBY = get_environ('USE_STANDBY', False)
 
 # consts for keys
-PRIMARY_KEY = os.environ.get('PRIMARY_KEY', 'mysql-primary')
-STANDBY_KEY = os.environ.get('STANDBY_KEY', 'mysql-standby')
-BACKUP_TTL_KEY = os.environ.get('BACKUP_TTL_KEY', 'mysql-backup-run')
-LAST_BACKUP_KEY = os.environ.get('LAST_BACKUP_KEY', 'mysql-last-backup')
-LAST_BINLOG_KEY = os.environ.get('LAST_BINLOG_KEY', 'mysql-last-binlog')
-BACKUP_NAME = os.environ.get('BACKUP_NAME', 'mysql-backup')
-BACKUP_TTL = '{}s'.format(os.environ.get('BACKUP_TTL', 86400)) # every 24 hours
-SESSION_CACHE_FILE = os.environ.get('SESSION_CACHE_FILE', '/tmp/mysql-session')
-SESSION_NAME = os.environ.get('SESSION_NAME', 'mysql-primary-lock')
-SESSION_TTL = int(os.environ.get('SESSION_TTL', 60))
+PRIMARY_KEY = get_environ('PRIMARY_KEY', 'mysql-primary')
+STANDBY_KEY = get_environ('STANDBY_KEY', 'mysql-standby')
+BACKUP_TTL_KEY = get_environ('BACKUP_TTL_KEY', 'mysql-backup-run')
+LAST_BACKUP_KEY = get_environ('LAST_BACKUP_KEY', 'mysql-last-backup')
+LAST_BINLOG_KEY = get_environ('LAST_BINLOG_KEY', 'mysql-last-binlog')
+BACKUP_NAME = get_environ('BACKUP_NAME', 'mysql-backup')
+BACKUP_TTL = '{}s'.format(get_environ('BACKUP_TTL', 86400)) # every 24 hours
+SESSION_CACHE_FILE = get_environ('SESSION_CACHE_FILE', '/tmp/mysql-session')
+SESSION_NAME = get_environ('SESSION_NAME', 'mysql-primary-lock')
+SESSION_TTL = int(get_environ('SESSION_TTL', 60))
 
 # ---------------------------------------------------------
 
@@ -118,17 +149,17 @@ class MySQLConfig(object):
     """
 
     def __init__(self):
-        self.mysql_db = os.environ.get('MYSQL_DATABASE', None)
-        self.mysql_user = os.environ.get('MYSQL_USER', None)
-        self.mysql_password = os.environ.get('MYSQL_PASSWORD', None)
-        self.mysql_root_password = os.environ.get('MYSQL_ROOT_PASSWORD', '')
+        self.mysql_db = get_environ('MYSQL_DATABASE', None)
+        self.mysql_user = get_environ('MYSQL_USER', None)
+        self.mysql_password = get_environ('MYSQL_PASSWORD', None)
+        self.mysql_root_password = get_environ('MYSQL_ROOT_PASSWORD', '')
         self.mysql_random_root_password = self._parse_environ_bool(
             'MYSQL_RANDOM_ROOT_PASSWORD', True)
         self.mysql_onetime_password = self._parse_environ_bool(
             'MYSQL_ONETIME_PASSWORD', False)
-        self.repl_user = os.environ.get('MYSQL_REPL_USER', None)
-        self.repl_password = os.environ.get('MYSQL_REPL_PASSWORD', None)
-        self.datadir = os.environ.get('MYSQL_DATADIR', '/var/lib/mysql')
+        self.repl_user = get_environ('MYSQL_REPL_USER', None)
+        self.repl_password = get_environ('MYSQL_REPL_PASSWORD', None)
+        self.datadir = get_environ('MYSQL_DATADIR', '/var/lib/mysql')
 
         # make sure that if we've pulled in an external data volume that
         # the mysql user can read it
@@ -139,7 +170,7 @@ class MySQLConfig(object):
         Parse environment variable strings like "yes/no", "on/off",
         "true/false", "1/0" into a bool.
         """
-        val = os.environ.get(var, default)
+        val = get_environ(var, default)
         try:
             return bool(int(val))
         except ValueError:
@@ -158,7 +189,7 @@ class MySQLConfig(object):
 
         # replace innodb_buffer_pool_size value from environment
         # or use a sensible default (70% of available physical memory)
-        innodb_buffer_pool_size = int(os.environ.get('INNODB_BUFFER_POOL_SIZE', 0))
+        innodb_buffer_pool_size = int(get_environ('INNODB_BUFFER_POOL_SIZE', 0))
         if not innodb_buffer_pool_size:
             with open('/proc/meminfo', 'r') as memInfoFile:
                 memInfo = memInfoFile.read()
@@ -187,15 +218,17 @@ class Manta(object):
     """
 
     def __init__(self):
-        self.account = os.environ.get('MANTA_USER', None)
-        self.user = os.environ.get('MANTA_SUBUSER', None)
-        self.role = os.environ.get('MANTA_ROLE', None)
-        self.key_id = os.environ.get('MANTA_KEY_ID', None)
+        self.account = get_environ('MANTA_USER', None)
+        self.user = get_environ('MANTA_SUBUSER', None)
+        self.role = get_environ('MANTA_ROLE', None)
+        self.key_id = get_environ('MANTA_KEY_ID', None)
+        self.url = get_environ('MANTA_URL',
+                               'https://us-east.manta.joyent.com')
+        self.bucket = get_environ('MANTA_BUCKET',
+                                  '/{}/stor'.format(self.account))
+        # we don't want to use get_environ here because we have a different
+        # de-munging to do
         self.private_key = os.environ.get('MANTA_PRIVATE_KEY').replace('#', '\n')
-        self.url = os.environ.get('MANTA_URL',
-                                  'https://us-east.manta.joyent.com')
-        self.bucket = os.environ.get('MANTA_BUCKET',
-                                     '/{}/stor'.format(self.account))
 
         self.signer = manta.PrivateKeySigner(self.key_id, self.private_key)
         self.client = manta.MantaClient(self.url,
@@ -229,22 +262,21 @@ class ContainerPilot(object):
         # TODO: we should make sure we can support JSON-in-env-var
         # the same as ContainerPilot itself
         self.node = node
-        self.path = os.environ.get('CONTAINERPILOT').replace('file://', '')
+        self.path = get_environ('CONTAINERPILOT', None).replace('file://', '')
         with open(self.path, 'r') as f:
             self.config = json.loads(f.read())
 
+    @debug
     def update(self):
-        log.debug('ContainerPilot.update')
         state = self.node.get_state()
         if state and self.config['services'][0]['name'] != state:
             self.config['services'][0]['name'] = state
             self.render()
             return True
 
+    @debug
     def render(self):
-        log.debug('ContainerPilot.render')
         new_config = json.dumps(self.config)
-        log.debug(new_config)
         with open(self.path, 'w') as f:
             f.write(new_config)
 
@@ -263,11 +295,16 @@ def pre_start():
     place and then let the first health check handler take it from there
     """
     if not os.path.isdir(os.path.join(config.datadir, 'mysql')):
-        if not initialize_db():
-            log.info('Skipping database setup.')
+        last_backup = has_snapshot()
+        if last_backup:
+            get_snapshot(last_backup)
+            restore_from_snapshot(last_backup)
+        else:
+            if not initialize_db():
+                log.info('Skipping database setup.')
     sys.exit(0)
 
-
+@debug
 def health():
     """
     Run a simple health check. Also acts as a check for whether the
@@ -275,7 +312,6 @@ def health():
     changed externally), or if we need to make a backup because the
     backup TTL has expired.
     """
-    log.debug('health check fired.')
     try:
         node = MySQLNode()
         cp = ContainerPilot(node)
@@ -289,7 +325,6 @@ def health():
         # set above) and immediately return when we discover the lock exists.
         # Otherwise, we bootstrap the instance.
         was_ready = assert_initialized_for_state(node)
-        log.debug('was initialized: %s', was_ready)
 
         # cp.reload() will exit early so no need to setup
         # connection until this point
@@ -330,14 +365,12 @@ def health():
         # / TODO: end of section to move to periodic task
 
         mysql_query(node.conn, 'SELECT 1', ())
-        sys.exit(0)
     except Exception as ex:
         log.exception(ex)
         sys.exit(1)
 
-
+@debug
 def on_change():
-    log.debug('on_change check fired.')
     try:
         node = MySQLNode()
         cp = ContainerPilot(node)
@@ -373,7 +406,7 @@ def on_change():
                     return
                 else:
                     # we lost the race to lock the session for ourselves
-                    log.debug('could not lock session')
+                    log.info('could not lock session')
                     time.sleep(1)
                     continue
 
@@ -396,9 +429,8 @@ def on_change():
             time.sleep(1) # avoid hammering Consul
             continue
 
-
+@debug
 def create_snapshot():
-    log.debug('create_snapshot')
     try:
         lockfile_name = '/tmp/{}'.format(BACKUP_TTL_KEY)
         backup_lock = open(lockfile_name, 'r+')
@@ -420,8 +452,10 @@ def create_snapshot():
                                    #'--compress',
                                    '--stream=tar',
                                    '/tmp/backup'], stdout=f)
-        log.debug('snapshot completed, uploading to object store')
+        log.info('snapshot completed, uploading to object store')
         manta_config.put_backup(backup_id, '/tmp/backup.tar')
+
+        log.debug('snapshot uploaded, setting LAST_BACKUP_KEY in Consul')
         consul.kv.put(LAST_BACKUP_KEY, backup_id)
 
         ctx = dict(user=config.repl_user,
@@ -433,12 +467,15 @@ def create_snapshot():
         # query lets IndexError bubble up -- something's broken
         results = mysql_query(conn, 'SHOW MASTER STATUS', ())
         binlog_file = results[0][0]
+        log.debug('setting LAST_BINLOG_KEY in Consul')
         consul.kv.put(LAST_BINLOG_KEY, binlog_file)
 
     except IOError:
         return False
     finally:
+        log.debug('unlocking backup lock')
         fcntl.flock(backup_lock, fcntl.LOCK_UN)
+        log.debug('closing backup file')
         backup_lock.close()
 
 
@@ -446,7 +483,7 @@ def create_snapshot():
 # ---------------------------------------------------------
 # run_as_* functions determine the top-level behavior of a node
 
-
+@debug
 def assert_initialized_for_state(node):
     """
     If the node has not yet been set up, find the correct state and initialize
@@ -492,7 +529,7 @@ def assert_initialized_for_state(node):
         return True
 
 
-
+@debug
 def run_as_primary(node):
     """
     The overall workflow here is ported and reworked from the
@@ -525,7 +562,7 @@ def run_as_primary(node):
         # snapshot the primary so that we can bootstrap the standby.
         write_snapshot(node.conn)
 
-
+@debug
 def run_as_standby(node):
     """
     The startup of a standby is identical to the replica except that
@@ -535,14 +572,10 @@ def run_as_standby(node):
     mark_as_standby(node)
     run_as_replica(node)
 
+@debug
 def run_as_replica(node):
     try:
         log.info('Setting up replication.')
-        last_backup = has_snapshot()
-        if last_backup:
-            get_snapshot(last_backup)
-            restore_from_snapshot(last_backup)
-
         ctx = dict(user=config.repl_user,
                    password=config.repl_password,
                    database=config.mysql_db)
@@ -571,8 +604,8 @@ def wait_for_connection(user='root', password=None, database=None, timeout=30):
                 raise
             time.sleep(1)
 
+@debug
 def mark_with_session(key, val, session_id, timeout=10):
-    log.debug('mark_with_session')
     while timeout > 0:
         try:
             return consul.kv.put(key, val, acquire=session_id)
@@ -777,18 +810,21 @@ def update_session_ttl(session_id=None):
         session_id = get_session()
     consul.session.renew(session_id)
 
-
+@debug
 def has_snapshot():
     """ Ask Consul for 'last backup' key """
-    log.debug('has_snapshot')
-    last_backup_id = get_from_consul(LAST_BACKUP_KEY)
-    return last_backup_id
+    try:
+        last_backup_id = get_from_consul(LAST_BACKUP_KEY)
+        return last_backup_id
+    except pyconsul.base.ConsulException:
+        # Consul isn't up yet
+        return None
 
+@debug
 def get_snapshot(filename):
     """
     Pull files from Manta; let exceptions bubble up to the caller
     """
-    log.debug('get_snapshot')
     try:
         os.mkdir('/tmp/backup', 0770)
     except OSError:
@@ -806,6 +842,7 @@ def restore_from_snapshot(filename):
                            '/tmp/backup'])
     take_ownership(config)
 
+@debug
 def is_backup_running():
     try:
         lockfile_name = '/tmp/{}'.format(BACKUP_TTL_KEY)
@@ -815,48 +852,39 @@ def is_backup_running():
     try:
         fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
         fcntl.flock(backup_lock, fcntl.LOCK_UN)
-        log.debug('is_backup_running: False')
         return False
     except IOError:
-        log.debug('is_backup_running: True')
         return True
     finally:
         backup_lock.close()
 
+@debug
 def is_binlog_stale(conn):
     results = mysql_query(conn, 'SHOW MASTER STATUS', ())
     try:
         binlog_file = results[0][0]
         last_binlog_file = get_from_consul(LAST_BINLOG_KEY)
     except IndexError:
-        log.debug('is_binlog_stale: True (no LAST_BINLOG_KEY)')
         return True
-    is_stale = binlog_file != last_binlog_file
-    log.debug('is_binlog_stale: %s', is_stale)
-    return is_stale
+    return binlog_file != last_binlog_file
 
+@debug
 def is_time_for_snapshot():
     """ Check if it's time to do a snapshot """
-    log.debug('is_time_for_snapshot')
     try:
         check = consul.agent.checks()[BACKUP_TTL_KEY]
-        log.debug(check)
         if check['Status'] == 'passing':
-            log.debug('is_time_for_snapshot: False')
             return False
-        log.debug('is_time_for_snapshot: True')
         return True
     except KeyError:
-        log.debug('is_time_for_snapshot: True')
         return True
 
+@debug
 def write_snapshot(conn):
     """
     Create a new snapshot, upload it to Manta, and register it
     with Consul. Exceptions bubble up to caller
     """
-    log.debug('write_snapshot')
-
 
     # we set the BACKUP_TTL before we run the backup so that we don't
     # have multiple health checks running concurrently. We then fork the
@@ -869,23 +897,19 @@ def write_snapshot(conn):
     # to a task and avoid this mess.
     subprocess.Popen(['python', '/usr/local/bin/manage.py', 'create_snapshot'])
 
+@debug
 def set_backup_ttl():
     """
     Write a TTL check for the BACKUP_TTL key.
     Exceptions are allowed to bubble up to the caller
     """
-    log.debug('set_backup_ttl')
-    log.debug(BACKUP_TTL_KEY)
     try:
         pass_check = consul.agent.check.ttl_pass(BACKUP_TTL_KEY)
-        log.debug(pass_check)
         if not pass_check:
-            log.debug('no pass_check!')
             consul.agent.check.register(name=BACKUP_TTL_KEY,
                                         check=pyconsul.Check.ttl(BACKUP_TTL),
                                         check_id=BACKUP_TTL_KEY)
             pass_check = consul.agent.check.ttl_pass(BACKUP_TTL_KEY)
-            log.debug(pass_check)
             if not pass_check:
                 raise Exception('Could not register health check for {}'
                                 .format(BACKUP_TTL_KEY))
@@ -894,13 +918,13 @@ def set_backup_ttl():
 
     return
 
+@debug
 def set_primary_for_replica(conn):
     """
     Set up GTID-based replication to the primary; once this is set the
     replica will automatically try to catch up with the primary's last
     transactions.
     """
-    log.debug('set_primary_for_replica')
     primary = get_primary_host()
     sql = ('CHANGE MASTER TO '
            'MASTER_HOST           = %s, '
@@ -913,19 +937,18 @@ def set_primary_for_replica(conn):
            'START SLAVE;')
     mysql_exec(conn, sql, (primary, config.repl_user, config.repl_password,))
 
-
+@debug
 def get_primary_host(primary=None, timeout=30):
     """
     Query Consul for healthy mysql nodes and check their ServiceID vs
     the primary node. Returns the IP address of the matching node or
     raises an exception.
     """
-    log.debug('get_primary_host')
     if not primary:
         primary = get_primary_node()
     if not primary:
         raise Exception('Tried replication setup but could not find primary.')
-    log.debug('Checking if primary (%s) is healthy...', primary)
+    log.debug('checking if primary (%s) is healthy...', primary)
 
     while timeout > 0:
         try:
@@ -940,8 +963,8 @@ def get_primary_host(primary=None, timeout=30):
     raise Exception('Tried replication setup, but primary is '
                     'set and not healthy.')
 
+@debug
 def get_primary_node(timeout=10):
-    log.debug('get_primary_node')
     while timeout > 0:
         try:
             result = consul.kv.get(PRIMARY_KEY)
