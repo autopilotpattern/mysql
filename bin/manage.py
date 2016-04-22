@@ -30,7 +30,7 @@ requests_logger.setLevel(logging.WARN)
 manta_logger = logging.getLogger('manta')
 manta_logger.setLevel(logging.INFO)
 
-log = logging.getLogger('triton-mysql')
+log = logging.getLogger('manage')
 
 consul = pyconsul.Consul(host=os.environ.get('CONSUL', 'consul'))
 config = None
@@ -83,11 +83,11 @@ class MySQLNode(object):
         """
         if not self.state:
             self.primary = get_primary_node()
-            if self.name == self.primary:
+            if self.hostname == self.primary:
                 self.state = PRIMARY
             elif USE_STANDBY:
                 self.standby = get_standby_node()
-                if self.name == self.standby:
+                if self.hostname == self.standby:
                     self.state = STANDBY
         return self.state
 
@@ -234,6 +234,7 @@ class ContainerPilot(object):
             self.config = json.loads(f.read())
 
     def update(self):
+        log.debug('ContainerPilot.update')
         state = self.node.get_state()
         if state and self.config['services'][0]['name'] != state:
             self.config['services'][0]['name'] = state
@@ -241,8 +242,9 @@ class ContainerPilot(object):
             return True
 
     def render(self):
+        log.debug('ContainerPilot.render')
         new_config = json.dumps(self.config)
-        log.info(new_config)
+        log.debug(new_config)
         with open(self.path, 'w') as f:
             f.write(new_config)
 
@@ -286,7 +288,8 @@ def health():
         # path is to check a lock file against the node state (which has been
         # set above) and immediately return when we discover the lock exists.
         # Otherwise, we bootstrap the instance.
-        assert_initialized_for_state(node)
+        was_ready = assert_initialized_for_state(node)
+        log.debug('was initialized: %s', was_ready)
 
         # cp.reload() will exit early so no need to setup
         # connection until this point
@@ -313,9 +316,9 @@ def health():
         # TODO: move this section to a periodic task handler when that lands
         # (ref https://github.com/joyent/containerpilot/pull/134) in
         # ContainerPilot so we don't block the health check.
-        if all(node.is_snapshot_node(),
-               (not is_backup_running()),
-               (is_binlog_stale(node.conn) or is_time_for_snapshot())):
+        if all((node.is_snapshot_node(),
+                (not is_backup_running()),
+                (is_binlog_stale(node.conn) or is_time_for_snapshot()))):
             try:
                 write_snapshot(node.conn)
             except Exception as ex:
@@ -478,6 +481,7 @@ def assert_initialized_for_state(node):
             state = STANDBY
         else:
             state = REPLICA
+    node.state = state
 
     runner, unlocks = checks[state]
     try:
@@ -497,18 +501,24 @@ def run_as_primary(node):
     """
     node.state = PRIMARY
     mark_as_primary(node)
-    if os.path.isdir(os.path.join(config.datadir, 'mysql')):
-        node.conn = wait_for_connection()
-        stop_replication(node.conn) # in case this is a newly-promoted primary
-    else:
+
+    node.conn = wait_for_connection()
+    if node.conn:
+        # if we can make a connection w/o a password then this is the
+        # first pass
         set_timezone_info()
-        node.conn = wait_for_connection()
         setup_root_user(node.conn)
         create_db(node.conn)
         create_default_user(node.conn)
         create_repl_user(node.conn)
         run_external_scripts('/etc/initdb.d')
         expire_root_password(node.conn)
+    else:
+        ctx = dict(user=config.repl_user,
+                   password=config.repl_password,
+                   database=config.mysql_db)
+        node.conn = wait_for_connection(**ctx)
+        stop_replication(node.conn) # in case this is a newly-promoted primary
 
     if USE_STANDBY:
         # if we're using a standby instance then we need to first
@@ -798,7 +808,11 @@ def restore_from_snapshot(filename):
 
 def is_backup_running():
     try:
-        backup_lock = open('/tmp/{}'.format(BACKUP_TTL_KEY), 'r+')
+        lockfile_name = '/tmp/{}'.format(BACKUP_TTL_KEY)
+        backup_lock = open(lockfile_name, 'r+')
+    except IOError:
+        backup_lock = open(lockfile_name, 'w')
+    try:
         fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
         fcntl.flock(backup_lock, fcntl.LOCK_UN)
         return True
