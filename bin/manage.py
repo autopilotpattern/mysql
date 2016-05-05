@@ -428,6 +428,13 @@ def on_change():
             set_primary_for_replica(node.conn)
             return
 
+        except pymysql.err.InternalError as ex:
+            # MySQL Error code 1198: ER_SLAVE_MUST_STOP
+            # ref https://dev.mysql.com/doc/refman/5.6/en/error-messages-server.html
+            # This arises because the health check has already passed thru
+            # and set up replication.
+            if ex.args[0] == 1198:
+                break
         except Exception as ex:
             # This exception gets thrown if the session lock for `mysql-primary`
             # key has not expired yet (but there's no healthy primary either),
