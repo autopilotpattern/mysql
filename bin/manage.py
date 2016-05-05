@@ -44,7 +44,13 @@ def debug(fn):
     """
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        name = '{}{}'.format((len(inspect.stack()) * " "), fn.__name__)
+        try:
+            # because we have concurrent processes running we want
+            # to tag each stack with an identifier for that process
+            arg = "[{}]".format(sys.argv[1])
+        except IndexError:
+            arg = "[pre_start]"
+        name = '{}{}{}'.format(arg, (len(inspect.stack()) * " "), fn.__name__)
         log.debug('%s' % name)
         out = apply(fn, args, kwargs)
         log.debug('%s: %s', name, out)
@@ -288,6 +294,7 @@ class ContainerPilot(object):
 # ---------------------------------------------------------
 # Top-level functions called by ContainerPilot or forked by this program
 
+@debug
 def pre_start():
     """
     MySQL must be running in order to execute most of our setup behavior
@@ -617,6 +624,7 @@ def mark_with_session(key, val, session_id, timeout=10):
 # ---------------------------------------------------------
 # functions to support initialization
 
+@debug
 def mark_as_primary(node):
     """ Write flag to Consul to mark this node as primary """
     session_id = get_session()
@@ -626,6 +634,7 @@ def mark_as_primary(node):
         sys.exit(1)
     node.state = PRIMARY
 
+@debug
 def initialize_db():
     """
     post-installation run to set up data directories
@@ -764,6 +773,7 @@ def run_external_scripts(path):
 # ---------------------------------------------------------
 # functions to support replication
 
+@debug
 def mark_as_standby(node):
     session_id = get_session()
     if not mark_with_session(STANDBY_KEY, node.hostname, session_id):
