@@ -46,18 +46,29 @@ class MySQLStackTest(AutopilotPatternTest):
 
     def check(self):
         """ Verify that Consul addresses match container addresses """
-        servers = self.get_service_addresses_from_consul('mysql')
-        servers.sort()
-
-        primary = self.get_service_addresses_from_consul('mysql-primary')[0]
+        replicas = self.get_replicas()
+        primary = self.get_primary()
 
         expected = [str(ip) for ip in self.get_service_ips('mysql')[1]]
         expected.remove(primary)
         expected.sort()
 
-        self.assertEqual(servers, expected,
+        self.assertEqual(replicas, expected,
                          'Upstream blocks {} did not match actual IPs {}'
-                         .format(servers, expected))
+                         .format(replicas, expected))
+
+    def get_primary(self):
+        """ Get the IP for the primary from Consul. """
+        nodes = self.get_service_addresses_from_consul('mysql-primary')
+        if len(nodes) != 1:
+            self.fail()
+        return nodes[0]
+
+    def get_replicas(self):
+        """ Get the IPs for the replica(s) from Consul. """
+        nodes = self.get_service_addresses_from_consul('mysql')
+        nodes.sort()
+        return nodes
 
 
 if __name__ == "__main__":
