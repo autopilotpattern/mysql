@@ -19,11 +19,18 @@ ship:
 	docker push autopilotpattern/mysql
 
 # -------------------------------------------------------
-# for testing against Docker locally
+# testing
 
-stop:
-	docker-compose -p my -f local-compose.yml stop || true
-	docker-compose -p my -f local-compose.yml rm -f || true
+DOCKER_CERT_PATH ?=
+DOCKER_HOST ?=
+DOCKER_TLS_VERIFY ?=
+LOG_LEVEL ?= DEBUG
+
+ifeq ($(DOCKER_CERT_PATH),)
+	DOCKER_CTX := -v /var/run/docker.sock:/var/run/docker.sock
+else
+	DOCKER_CTX := -e DOCKER_TLS_VERIFY=$(DOCKER_TLS_VERIFY) -e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH) -e DOCKER_HOST=$(DOCKER_HOST)
+endif
 
 cleanup:
 	$(call check_var, SDC_ACCOUNT, Required to cleanup Manta.)
@@ -31,13 +38,25 @@ cleanup:
 	mmkdir /${SDC_ACCOUNT}/stor/triton-mysql
 	mchmod -- +triton_mysql /${SDC_ACCOUNT}/stor/triton-mysql
 
-test: stop build
-	docker-compose -p my -f local-compose.yml up -d
-	docker ps
+build-test:
+	docker build -f tests/Dockerfile -t="test" .
 
-replicas:
-	docker-compose -p my -f local-compose.yml scale mysql=3
-	docker ps
+test-triton:
+	docker run --rm \
+		-e DOCKER_TLS_VERIFY=1 \
+		-e DOCKER_CERT_PATH=/.sdc/docker/${SDC_ACCOUNT} \
+		-e DOCKER_HOST=$(DOCKER_HOST) \
+		-v ${HOME}/.sdc:/.sdc \
+		-v $(shell pwd):/src \
+		-w /src test python tests/tests.py
+
+test:
+	docker run --rm $(DOCKER_CTX) \
+		-e LOG_LEVEL=$(LOG_LEVEL) \
+		-e COMPOSE_FILE=local-compose.yml \
+		-v $(shell pwd):/src \
+		-v ${HOME}/src/autopilotpattern/testing/testcases.py:/usr/lib/python2.7/site-packages/testcases.py \
+		-w /src test python tests/tests.py
 
 # -------------------------------------------------------
 
