@@ -1,4 +1,5 @@
 from __future__ import print_function
+import os
 import re
 import time
 import unittest
@@ -7,6 +8,13 @@ from testcases import AutopilotPatternTest, WaitTimeoutError, debug
 class MySQLStackTest(AutopilotPatternTest):
 
     project_name = 'my'
+
+    def setUp(self):
+        """
+        Run the setup script but then update it from the environment
+        """
+        self.run_script('bash', 'setup.sh')
+        self.update_env_file('_env', os.environ.items())
 
     @debug
     def test_replication_and_failover(self):
@@ -29,6 +37,13 @@ class MySQLStackTest(AutopilotPatternTest):
 
         # check replication is working
         # TODO
+        # WIP
+        _, out, err = self.docker_compose_exec(
+            'mysql_1',
+            'mysql -u ${MYSQL_USER} -p${MYSQL_PASSWORD} -e "SELECT 1" mydb'
+        )
+        print(out)
+        print(err)
 
         # kill the primary, make sure we get a new primary
         # TODO

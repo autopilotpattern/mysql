@@ -46,6 +46,7 @@ test-triton:
 		-e DOCKER_TLS_VERIFY=1 \
 		-e DOCKER_CERT_PATH=/.sdc/docker/${SDC_ACCOUNT} \
 		-e DOCKER_HOST=$(DOCKER_HOST) \
+		--env-file=_env \
 		-v ${HOME}/.sdc:/.sdc \
 		-v $(shell pwd):/src \
 		-w /src test python tests/tests.py
@@ -54,6 +55,7 @@ test:
 	docker run --rm $(DOCKER_CTX) \
 		-e LOG_LEVEL=$(LOG_LEVEL) \
 		-e COMPOSE_FILE=local-compose.yml \
+		--env-file=_env \
 		-v $(shell pwd):/src \
 		-v ${HOME}/src/autopilotpattern/testing/testcases.py:/usr/lib/python2.7/site-packages/testcases.py \
 		-w /src test python tests/tests.py
