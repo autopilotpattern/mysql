@@ -56,7 +56,7 @@ test:
 		-e LOG_LEVEL=$(LOG_LEVEL) \
 		-e COMPOSE_FILE=local-compose.yml \
 		--env-file=_env \
-		-v $(shell pwd):/src \
+		-v $(shell pwd)/tests:/src/tests \
 		-v ${HOME}/src/autopilotpattern/testing/testcases.py:/usr/lib/python2.7/site-packages/testcases.py \
 		-w /src test python tests/tests.py
 

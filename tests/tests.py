@@ -1,20 +1,15 @@
 from __future__ import print_function
 import os
 import re
+import subprocess
 import time
 import unittest
-from testcases import AutopilotPatternTest, WaitTimeoutError, debug
+from testcases import AutopilotPatternTest, WaitTimeoutError, \
+    debug, dump_environment_to_file
 
 class MySQLStackTest(AutopilotPatternTest):
 
     project_name = 'my'
-
-    def setUp(self):
-        """
-        Run the setup script but then update it from the environment
-        """
-        self.run_script('bash', 'setup.sh')
-        self.update_env_file('_env', os.environ.items())
 
     @debug
     def test_replication_and_failover(self):
@@ -54,10 +49,14 @@ class MySQLStackTest(AutopilotPatternTest):
 
     def settle(self, service, count):
         """ Wait for the service to appear as healthy in Consul """
-        nodes = self.wait_for_service(service, count, timeout=60)
-        if len(nodes) < count:
+        try:
+            nodes = self.wait_for_service(service, count, timeout=60)
+            if len(nodes) < count:
+                raise WaitTimeoutError()
+        except WaitTimeoutError:
             self.fail('Failed to scale {} to {} instances'
                       .format(service, count))
+
 
     def check(self):
         """ Verify that Consul addresses match container addresses """
@@ -87,4 +86,5 @@ class MySQLStackTest(AutopilotPatternTest):
 
 
 if __name__ == "__main__":
+    dump_environment_to_file('/src/_env')
     unittest.main()
