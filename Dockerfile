@@ -6,6 +6,8 @@ RUN apt-get update \
         python-dev \
         gcc \
         curl \
+        libffi-dev \
+        libssl-dev \
         percona-xtrabackup \
     && rm -rf /var/lib/apt/lists/*
 
