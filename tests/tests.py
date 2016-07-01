@@ -5,13 +5,13 @@ import subprocess
 import time
 import unittest
 from testcases import AutopilotPatternTest, WaitTimeoutError, \
-    debug, dump_environment_to_file
+    dump_environment_to_file
 
 class MySQLStackTest(AutopilotPatternTest):
 
     project_name = 'my'
+    compose_file = 'local-compose.yml'
 
-    @debug
     def test_replication_and_failover(self):
         """
         Given the MySQL stack, when we scale up MySQL instances they should:
@@ -23,40 +23,40 @@ class MySQLStackTest(AutopilotPatternTest):
         """
         # wait until the first instance has configured itself as the
         # the primary
-        self.settle('mysql-primary', 1)
+        self.instrument(self.settle, 'mysql-primary', 1)
 
         # scale up, make sure we have 2 working replica instances
-        self.docker_compose_scale('mysql', 3)
-        self.settle('mysql', 2)
-        self.check()
+        self.compose_scale('mysql', 3)
+        self.instrument(self.settle, 'mysql', 2, timeout=90)
+        self.instrument(self.check)
 
         # check replication is working
-        # TODO
-        # WIP
-        _, out, err = self.docker_compose_exec(
+        user = os.environ.get('MYSQL_USER')
+        passwd = os.environ.get('MYSQL_PASSWORD')
+        db = os.environ.get('MYSQL_DATABASE')
+        out = self.docker_exec(
             'mysql_1',
-            'mysql -u ${MYSQL_USER} -p${MYSQL_PASSWORD} -e "SELECT 1" mydb'
+            ['mysql', '-u', user, '-p{}'.format(passwd), '-e', 'SELECT 1', db]
         )
-        print(out)
-        print(err)
 
         # kill the primary, make sure we get a new primary
-        # TODO
+        self.docker_stop('mysql_1')
+        self.instrument(self.settle, 'mysql-primary', 1, timeout=150)
+        self.instrument(self.settle, 'mysql', 1)
 
         # check replication is working
         # TODO
 
 
-    def settle(self, service, count):
+    def settle(self, service, count, timeout=60):
         """ Wait for the service to appear as healthy in Consul """
         try:
-            nodes = self.wait_for_service(service, count, timeout=60)
+            nodes = self.wait_for_service(service, count, timeout=timeout)
             if len(nodes) < count:
                 raise WaitTimeoutError()
         except WaitTimeoutError:
             self.fail('Failed to scale {} to {} instances'
                       .format(service, count))
-
 
     def check(self):
         """ Verify that Consul addresses match container addresses """
