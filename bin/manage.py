@@ -87,7 +87,7 @@ STANDBY_KEY = get_environ('STANDBY_KEY', 'mysql-standby')
 BACKUP_TTL_KEY = get_environ('BACKUP_TTL_KEY', 'mysql-backup-run')
 LAST_BACKUP_KEY = get_environ('LAST_BACKUP_KEY', 'mysql-last-backup')
 LAST_BINLOG_KEY = get_environ('LAST_BINLOG_KEY', 'mysql-last-binlog')
-BACKUP_NAME = get_environ('BACKUP_NAME', 'mysql-backup')
+BACKUP_NAME = get_environ('BACKUP_NAME', 'mysql-backup-%Y-%m-%dT%H-%M-%SZ')
 BACKUP_TTL = '{}s'.format(get_environ('BACKUP_TTL', 86400)) # every 24 hours
 SESSION_CACHE_FILE = get_environ('SESSION_CACHE_FILE', '/tmp/mysql-session')
 SESSION_NAME = get_environ('SESSION_NAME', 'mysql-primary-lock')
@@ -455,8 +455,7 @@ def create_snapshot():
         fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
 
         # we don't want .isoformat() here because of URL encoding
-        now = datetime.utcnow().strftime('%Y-%m-%dT%H-%M-%SZ')
-        backup_id = '{}-{}'.format(BACKUP_NAME, now)
+        backup_id = datetime.utcnow().strftime('{}'.format(BACKUP_NAME))
 
         with open('/tmp/backup.tar', 'w') as f:
             subprocess.check_call(['/usr/bin/innobackupex',
