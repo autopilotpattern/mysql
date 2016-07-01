@@ -15,7 +15,7 @@ build:
 	docker-compose -p my -f local-compose.yml build
 
 ship:
-	docker tag -f my_mysql autopilotpattern/mysql
+	docker tag my_mysql autopilotpattern/mysql
 	docker push autopilotpattern/mysql
 
 # -------------------------------------------------------
@@ -29,7 +29,7 @@ LOG_LEVEL ?= DEBUG
 ifeq ($(DOCKER_CERT_PATH),)
 	DOCKER_CTX := -v /var/run/docker.sock:/var/run/docker.sock
 else
-	DOCKER_CTX := -e DOCKER_TLS_VERIFY=$(DOCKER_TLS_VERIFY) -e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH) -e DOCKER_HOST=$(DOCKER_HOST)
+	DOCKER_CTX := -e DOCKER_TLS_VERIFY=1 -e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH:$(HOME)%=%) -e DOCKER_HOST=$(DOCKER_HOST)
 endif
 
 cleanup:
@@ -41,24 +41,28 @@ cleanup:
 build-test:
 	docker build -f tests/Dockerfile -t="test" .
 
-test-triton:
-	docker run --rm \
-		-e DOCKER_TLS_VERIFY=1 \
-		-e DOCKER_CERT_PATH=/.sdc/docker/${SDC_ACCOUNT} \
-		-e DOCKER_HOST=$(DOCKER_HOST) \
-		--env-file=_env \
-		-v ${HOME}/.sdc:/.sdc \
-		-v $(shell pwd):/src \
-		-w /src test python tests/tests.py
+# Run tests by running the test container. Currently only runs locally
+# but takes your DOCKER environment vars to use as the test runner's
+# environment (ex. the test runner runs locally but starts containers
+# on Triton if you're pointed to Triton)
+TEST_RUN := python -m trace
+ifeq ($(TRACE),)
+	TEST_RUN := python
+endif
 
 test:
-	docker run --rm $(DOCKER_CTX) \
+	unset DOCKER_HOST \
+	&& unset DOCKER_CERT_PATH \
+	&& unset DOCKER_TLS_VERIFY \
+	&& docker run --rm $(DOCKER_CTX) \
 		-e LOG_LEVEL=$(LOG_LEVEL) \
+		-e COMPOSE_HTTP_TIMEOUT=300 \
 		-e COMPOSE_FILE=local-compose.yml \
 		--env-file=_env \
-		-v $(shell pwd)/tests:/src/tests \
+		-v ${HOME}/.triton:/.triton \
 		-v ${HOME}/src/autopilotpattern/testing/testcases.py:/usr/lib/python2.7/site-packages/testcases.py \
-		-w /src test python tests/tests.py
+		-v $(shell pwd)/tests/tests.py:/src/tests.py \
+		-w /src test $(TEST_RUN) tests.py
 
 # -------------------------------------------------------
 
