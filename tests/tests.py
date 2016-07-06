@@ -12,7 +12,6 @@ from testcases import AutopilotPatternTest, WaitTimeoutError, \
 class MySQLStackTest(AutopilotPatternTest):
 
     project_name = 'my'
-    compose_file = 'local-compose.yml'
 
     def setUp(self):
         self.user = os.environ.get('MYSQL_USER')

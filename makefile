@@ -27,7 +27,8 @@ DOCKER_TLS_VERIFY ?=
 LOG_LEVEL ?= DEBUG
 
 ifeq ($(DOCKER_CERT_PATH),)
-	DOCKER_CTX := -v /var/run/docker.sock:/var/run/docker.sock
+	DOCKER_CTX := -v /var/run/docker.sock:/var/run/docker.sock -e COMPOSE_FILE=local-compose.yml \
+
 else
 	DOCKER_CTX := -e DOCKER_TLS_VERIFY=1 -e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH:$(HOME)%=%) -e DOCKER_HOST=$(DOCKER_HOST)
 endif
@@ -57,7 +58,6 @@ test:
 	&& docker run --rm $(DOCKER_CTX) \
 		-e LOG_LEVEL=$(LOG_LEVEL) \
 		-e COMPOSE_HTTP_TIMEOUT=300 \
-		-e COMPOSE_FILE=local-compose.yml \
 		--env-file=_env \
 		-v ${HOME}/.triton:/.triton \
 		-v ${HOME}/src/autopilotpattern/testing/testcases.py:/usr/lib/python2.7/site-packages/testcases.py \
