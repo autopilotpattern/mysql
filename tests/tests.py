@@ -18,6 +18,8 @@ class MySQLStackTest(AutopilotPatternTest):
         self.user = os.environ.get('MYSQL_USER')
         self.passwd = os.environ.get('MYSQL_PASSWORD')
         self.db = os.environ.get('MYSQL_DATABASE')
+        self.repl_user = os.environ.get('MYSQL_REPL_USER')
+        self.repl_passwd = os.environ.get('MYSQL_REPL_PASSWORD')
 
     def test_replication_and_failover(self):
         """
@@ -97,8 +99,22 @@ class MySQLStackTest(AutopilotPatternTest):
         field2 values passed in as the `vals` param.
         """
         check_row = 'SELECT * FROM tbl1 WHERE field1 = {};'
+        check_replica = 'SHOW SLAVE STATUS\G;'
         replicas = self.get_replica_containers()
         for replica in replicas:
+            timeout = 10
+            while timeout > 0:
+                # make sure the replica has had a chance to catch up
+                out = self.exec_query(replica, check_replica,
+                                      user=self.repl_user,
+                                      passwd=self.repl_passwd)
+                if 'Waiting for master to send event' in out:
+                    break
+                time.sleep(1)
+                timeout -= 1
+            else:
+                self.fail("Timed out waiting for replication to catch up")
+
             out = self.exec_query(replica, check_row.format(1))
             query_result = self.parse_query(out)
             try:
@@ -137,14 +153,18 @@ class MySQLStackTest(AutopilotPatternTest):
         nodes.sort()
         return nodes
 
-    def exec_query(self, container, query):
+    def exec_query(self, container, query, user=None, passwd=None):
         """
         Runs SQL statement via docker exec. Normally this method would
         be subject to SQL injection but we control all inputs and we
         don't want to have to ship a mysql client in the test rig.
         """
-        cmd = ['mysql', '-u', self.user,
-               '-p{}'.format(self.passwd),
+        if not user:
+            user = self.user
+        if not passwd:
+            passwd = self.passwd
+        cmd = ['mysql', '-u', user,
+               '-p{}'.format(passwd),
                '-e', query, self.db]
         try:
             out = self.docker_exec(container, cmd)
