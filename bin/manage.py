@@ -59,12 +59,14 @@ def debug(fn):
 
 def get_environ(key, default):
     """
-    Gets an environment variable and trims away comments and whitespace.
+    Gets an environment variable, trims away comments and whitespace,
+    and expands other environment variables.
     """
     val = os.environ.get(key, default)
     try:
         val = val.split('#')[0]
         val = val.strip()
+        val = os.path.expandvars(val)
     finally:
         # just swallow AttributeErrors for non-strings
         return val
@@ -468,7 +470,8 @@ def create_snapshot():
         log.info('snapshot completed, uploading to object store')
         manta_config.put_backup(backup_id, '/tmp/backup.tar')
 
-        log.debug('snapshot uploaded, setting LAST_BACKUP_KEY in Consul')
+        log.debug('snapshot uploaded to {}/{}, setting LAST_BACKUP_KEY'
+                  ' in Consul'.format(manta_config.bucket, backup_id))
         consul.kv.put(LAST_BACKUP_KEY, backup_id)
 
         ctx = dict(user=config.repl_user,

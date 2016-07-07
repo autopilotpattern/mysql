@@ -107,6 +107,23 @@ These variables will be written to `/etc/my.cnf`.
 
 - `INNODB_BUFFER_POOL_SIZE`: innodb_buffer_pool_size
 
+
+Environment variables are expanded automatically.
+This allows you to [use environment variables](https://docs.docker.com/compose/compose-file/#/environment) from the machine where `docker compose` runs.
+Example:
+
+```
+# local-compose.yml
+mysql:
+  environment:
+    USER:
+```
+
+```
+# _env
+MANTA_BUCKET=/companyaccount/stor/developers/${USER}/backups
+```
+
 ### Where to store data
 
 This pattern automates the data management and makes container effectively stateless to the Docker daemon and schedulers. This is designed to maximize convenience and reliability by minimizing the external coordination needed to manage the database. The use of external volumes (`--volumes-from`, `-v`, etc.) is not recommended.
