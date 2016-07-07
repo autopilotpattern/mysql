@@ -470,7 +470,8 @@ def create_snapshot():
         log.info('snapshot completed, uploading to object store')
         manta_config.put_backup(backup_id, '/tmp/backup.tar')
 
-        log.debug('snapshot uploaded, setting LAST_BACKUP_KEY in Consul')
+        log.debug('snapshot uploaded to {}/{}, setting LAST_BACKUP_KEY'
+                  ' in Consul'.format(manta_config.bucket, backup_id))
         consul.kv.put(LAST_BACKUP_KEY, backup_id)
 
         ctx = dict(user=config.repl_user,
