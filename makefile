@@ -15,15 +15,23 @@ build:
 	docker-compose -p my -f local-compose.yml build
 
 ship:
-	docker tag -f my_mysql autopilotpattern/mysql
+	docker tag my_mysql autopilotpattern/mysql
 	docker push autopilotpattern/mysql
 
 # -------------------------------------------------------
-# for testing against Docker locally
+# testing
 
-stop:
-	docker-compose -p my -f local-compose.yml stop || true
-	docker-compose -p my -f local-compose.yml rm -f || true
+DOCKER_CERT_PATH ?=
+DOCKER_HOST ?=
+DOCKER_TLS_VERIFY ?=
+LOG_LEVEL ?= DEBUG
+
+ifeq ($(DOCKER_CERT_PATH),)
+	DOCKER_CTX := -v /var/run/docker.sock:/var/run/docker.sock -e COMPOSE_FILE=local-compose.yml \
+
+else
+	DOCKER_CTX := -e DOCKER_TLS_VERIFY=1 -e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH:$(HOME)%=%) -e DOCKER_HOST=$(DOCKER_HOST)
+endif
 
 cleanup:
 	$(call check_var, SDC_ACCOUNT, Required to cleanup Manta.)
@@ -31,13 +39,30 @@ cleanup:
 	mmkdir /${SDC_ACCOUNT}/stor/triton-mysql
 	mchmod -- +triton_mysql /${SDC_ACCOUNT}/stor/triton-mysql
 
-test: stop build
-	docker-compose -p my -f local-compose.yml up -d
-	docker ps
+build-test:
+	docker build -f tests/Dockerfile -t="test" .
 
-replicas:
-	docker-compose -p my -f local-compose.yml scale mysql=3
-	docker ps
+# Run tests by running the test container. Currently only runs locally
+# but takes your DOCKER environment vars to use as the test runner's
+# environment (ex. the test runner runs locally but starts containers
+# on Triton if you're pointed to Triton)
+TEST_RUN := python -m trace
+ifeq ($(TRACE),)
+	TEST_RUN := python
+endif
+
+test:
+	unset DOCKER_HOST \
+	&& unset DOCKER_CERT_PATH \
+	&& unset DOCKER_TLS_VERIFY \
+	&& docker run --rm $(DOCKER_CTX) \
+		-e LOG_LEVEL=$(LOG_LEVEL) \
+		-e COMPOSE_HTTP_TIMEOUT=300 \
+		--env-file=_env \
+		-v ${HOME}/.triton:/.triton \
+		-v ${HOME}/src/autopilotpattern/testing/testcases.py:/usr/lib/python2.7/site-packages/testcases.py \
+		-v $(shell pwd)/tests/tests.py:/src/tests.py \
+		-w /src test $(TEST_RUN) tests.py
 
 # -------------------------------------------------------
 
