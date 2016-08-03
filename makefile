@@ -6,72 +6,127 @@ MAKEFLAGS += --warn-undefined-variables
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail
 .DEFAULT_GOAL := build
+.PHONY: build ship test help
 
 MANTA_LOGIN ?= triton_mysql
 MANTA_ROLE ?= triton_mysql
 MANTA_POLICY ?= triton_mysql
 
+## Display this help message
+help:
+	@awk '/^##.*$$/,/[a-zA-Z_-]+:/' $(MAKEFILE_LIST) | awk '!(NR%2){print $$0p}{p=$$0}' | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' | sort
+
+# ------------------------------------------------
+# Container builds
+
+# we get these from shippable if available, otherwise from git
+COMMIT ?= $(shell git rev-parse --short HEAD)
+BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
+TAG := $(BRANCH)-$(COMMIT)
+
+## Builds the application container image
 build:
-	docker-compose -p my -f local-compose.yml build
+	docker build -t=autopilotpattern/mysql:$(TAG) .
 
+## Pushes the application container image to the Docker Hub
 ship:
-	docker tag my_mysql autopilotpattern/mysql
-	docker push autopilotpattern/mysql
+	docker push autopilotpattern/mysql:$(TAG)
+
+
+# ------------------------------------------------
+# Test running
+
+LOG_LEVEL ?= INFO
+KEY := ~/.ssh/TritonTestingKey
+
+# if you pass `TRACE=1` into the call to `make` then the Python tests will
+# run under the `trace` module (provides detailed call logging)
+PYTHON := $(shell if [ -z ${TRACE} ]; then echo "python"; else echo "python -m trace"; fi)
+
+# sets up the Docker context for running the build container locally
+# `make test` runs in the build container on Shippable where the boot script
+# will pull the source from GitHub first, but if we want to debug locally
+# we'll need to mount the local source into the container.
+# TODO: remove mount to ~/src/autopilotpattern/testing
+LOCALRUN := \
+	-e PATH=/root/venv/3.5/bin:/usr/bin:/bin \
+	-e COMPOSE_HTTP_TIMEOUT=300 \
+	-e LOG_LEVEL=$(LOG_LEVEL) \
+	-w /src \
+	-v ~/.triton:/root/.triton \
+	-v ~/src/autopilotpattern/testing/testcases.py:/root/venv/3.5/lib/python3.5/site-packages/testcases.py \
+	-v $(shell pwd)/tests/tests.py:/src/tests.py \
+	-v $(shell pwd)/docker-compose.yml:/src/docker-compose.yml \
+	-v $(shell pwd)/local-compose.yml:/src/local-compose.yml \
+	-v $(shell pwd)/makefile:/src/makefile \
+	-v $(shell pwd)/setup.sh:/src/setup.sh \
+	-v ~/.ssh/timgross-joyent_id_rsa:/tmp/ssh/TritonTestingKey \
+	joyent/test
+
+MANTA_CONFIG := \
+	-e MANTA_USER=timgross \
+	-e MANTA_SUBUSER=triton_mysql \
+	-e MANTA_ROLE=triton_mysql
+
+## Build the test running container
+test-runner:
+	docker build -f tests/Dockerfile -t="joyent/test" .
+
+# configure triton profile
+~/.triton/profiles.d/us-sw-1.json:
+	{ \
+	  cp /tmp/ssh/TritonTestingKey $(KEY) ;\
+	  ssh-keygen -y -f $(KEY) > $(KEY).pub ;\
+	  FINGERPRINT=$$(ssh-keygen -l -f $(KEY) | awk '{print $$2}' | sed 's/MD5://') ;\
+	  printf '{"url": "https://us-sw-1.api.joyent.com", "name": "TritonTesting", "account": "timgross", "keyId": "%s"}' $${FINGERPRINT} > profile.json ;\
+	}
+	cat profile.json | triton profile create -f -
+	-rm profile.json
+
+# TODO: replace this user w/ a user specifically for testing
+# TODO: inject the _env file somehow
+## Run the build container (on Shippable) and deploy tests on Triton
+test: ~/.triton/profiles.d/us-sw-1.json
+	cp tests/tests.py . && \
+		DOCKER_TLS_VERIFY=1 \
+		DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
+		DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
+		COMPOSE_HTTP_TIMEOUT=300 \
+		PATH=/root/venv/3.5/bin:/usr/bin \
+		$(PYTHON) tests.py
+
+## Run the build container locally and deploy tests on Triton.
+test-local-triton: ~/.triton/profiles.d/us-sw-1.json
+	docker run -it --rm \
+		-e DOCKER_TLS_VERIFY=1 \
+		-e DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
+		-e DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
+		$(MANTA_CONFIG) \
+		$(LOCALRUN) $(PYTHON) tests.py
+
+## Run the build container locally and deploy tests on local Docker too.
+test-local-docker:
+	docker run -it --rm \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-e TRITON_SETUP_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
+		-e TRITON_SETUP_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
+		-e COMPOSE_FILE=local-compose.yml \
+		$(MANTA_CONFIG) \
+		$(LOCALRUN) $(PYTHON) tests.py
+
+shell:
+	docker run -it --rm \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-e COMPOSE_FILE=local-compose.yml \
+		$(LOCALRUN) /bin/bash #$(PYTHON)
 
 # -------------------------------------------------------
-# testing
 
-DOCKER_CERT_PATH ?=
-DOCKER_HOST ?=
-DOCKER_TLS_VERIFY ?=
-LOG_LEVEL ?= DEBUG
-
-ifeq ($(DOCKER_CERT_PATH),)
-	DOCKER_CTX := -v /var/run/docker.sock:/var/run/docker.sock -e COMPOSE_FILE=local-compose.yml \
-
-else
-	DOCKER_CTX := -e DOCKER_TLS_VERIFY=1 -e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH:$(HOME)%=%) -e DOCKER_HOST=$(DOCKER_HOST)
-endif
-
-cleanup:
-	$(call check_var, SDC_ACCOUNT, Required to cleanup Manta.)
-	-mrm -r /${SDC_ACCOUNT}/stor/triton-mysql/
-	mmkdir /${SDC_ACCOUNT}/stor/triton-mysql
-	mchmod -- +triton_mysql /${SDC_ACCOUNT}/stor/triton-mysql
-
-build-test:
-	docker build -f tests/Dockerfile -t="test" .
-
-# Run tests by running the test container. Currently only runs locally
-# but takes your DOCKER environment vars to use as the test runner's
-# environment (ex. the test runner runs locally but starts containers
-# on Triton if you're pointed to Triton)
-TEST_RUN := python -m trace
-ifeq ($(TRACE),)
-	TEST_RUN := python
-endif
-
-test:
-	unset DOCKER_HOST \
-	&& unset DOCKER_CERT_PATH \
-	&& unset DOCKER_TLS_VERIFY \
-	&& docker run --rm $(DOCKER_CTX) \
-		-e LOG_LEVEL=$(LOG_LEVEL) \
-		-e COMPOSE_HTTP_TIMEOUT=300 \
-		--env-file=_env \
-		-v ${HOME}/.triton:/.triton \
-		-v ${HOME}/src/autopilotpattern/testing/testcases.py:/usr/lib/python2.7/site-packages/testcases.py \
-		-v $(shell pwd)/tests/tests.py:/src/tests.py \
-		-w /src test $(TEST_RUN) tests.py
-
-# -------------------------------------------------------
-
-# create user and policies for backups
-# you need to have your SDC_ACCOUNT set
-# usage:
-# make manta EMAIL=example@example.com PASSWORD=strongpassword
-
+## Create user and policies for Manta backups
 manta:
+	# you need to have your SDC_ACCOUNT set
+	# usage:
+	# make manta EMAIL=example@example.com PASSWORD=strongpassword
 	$(call check_var, EMAIL PASSWORD SDC_ACCOUNT, \
 		Required to create a Manta login.)
 
@@ -90,6 +145,13 @@ manta:
 		--members=${MANTA_LOGIN}
 	mmkdir ${SDC_ACCOUNT}/stor/${MANTA_LOGIN}
 	mchmod -- +triton_mysql /${SDC_ACCOUNT}/stor/${MANTA_LOGIN}
+
+## Cleans out Manta backups
+cleanup:
+	$(call check_var, SDC_ACCOUNT, Required to cleanup Manta.)
+	-mrm -r /${SDC_ACCOUNT}/stor/triton-mysql/
+	mmkdir /${SDC_ACCOUNT}/stor/triton-mysql
+	mchmod -- +triton_mysql /${SDC_ACCOUNT}/stor/triton-mysql
 
 
 # -------------------------------------------------------

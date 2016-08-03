@@ -6,19 +6,58 @@ import time
 import unittest
 import uuid
 
-from testcases import AutopilotPatternTest, WaitTimeoutError, \
-    dump_environment_to_file
+from testcases import AutopilotPatternTest, WaitTimeoutError
 
 class MySQLStackTest(AutopilotPatternTest):
 
     project_name = 'my'
 
     def setUp(self):
-        self.user = os.environ.get('MYSQL_USER')
-        self.passwd = os.environ.get('MYSQL_PASSWORD')
-        self.db = os.environ.get('MYSQL_DATABASE')
-        self.repl_user = os.environ.get('MYSQL_REPL_USER')
-        self.repl_passwd = os.environ.get('MYSQL_REPL_PASSWORD')
+        """
+        autopilotpattern/mysql setup.sh writes an _env file with a CNS
+        entry and account info for Manta. In local-only testing this fails
+        so we need to set up a temporary remote Docker env
+        """
+        self.set_remote_docker_env()
+
+        try:
+            key = '/root/.ssh/id_rsa'
+            self.run_script('/bin/ln', '-s', '/tmp/ssh/TritonTestingKey', key)
+            pub = self.run_script('/usr/bin/ssh-keygen','-y','-f', key)
+            with open('{}.pub'.format(key), 'w') as f:
+                f.write(pub)
+            self.run_script('/src/setup.sh', '/root/.ssh/id_rsa')
+        except subprocess.CalledProcessError as ex:
+            self.fail(ex.output)
+
+        _manta_url =os.environ.get('MANTA_URL', 'https://us-east.manta.joyent.com')
+        _manta_user = os.environ.get('MANTA_USER', 'triton_mysql')
+        _manta_subuser = os.environ.get('MANTA_SUBUSER', 'triton_mysql')
+        _manta_role = os.environ.get('MANTA_ROLE', 'triton_mysql')
+        _manta_bucket = os.environ.get('MANTA_BUCKET',
+                                       '/{}/stor/{}'.format(_manta_user, _manta_subuser))
+        self.update_env_file(
+            '/src/_env', (
+                ('MANTA_URL', _manta_url),
+                ('MANTA_USER', _manta_user),
+                ('MANTA_SUBUSER', _manta_subuser),
+                ('MANTA_ROLE', _manta_role),
+                ('MANTA_BUCKET', _manta_bucket),
+            )
+        )
+        # TEMP
+        with open('/src/_env', 'a') as e:
+            e.write('LOG_LEVEL=DEBUG')
+
+        self.restore_local_docker_env()
+
+        # read-in the env file so we can use it in tests
+        env = self.read_env_file('/src/_env')
+        self.user = env.get('MYSQL_USER')
+        self.passwd = env.get('MYSQL_PASSWORD')
+        self.db = env.get('MYSQL_DATABASE')
+        self.repl_user = env.get('MYSQL_REPL_USER')
+        self.repl_passwd = env.get('MYSQL_REPL_PASSWORD')
 
     def test_replication_and_failover(self):
         """
@@ -194,5 +233,4 @@ class MySQLStackTest(AutopilotPatternTest):
 
 
 if __name__ == "__main__":
-    dump_environment_to_file('/src/_env')
     unittest.main()
