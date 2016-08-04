@@ -83,13 +83,13 @@ class MySQLStackTest(AutopilotPatternTest):
         # check replication is working by writing rows to the primary
         # and verifying they show up in the replicas
 
-        insert_row = "INSERT INTO tbl1 VALUES ({},'{}');"
+        insert_row = 'INSERT INTO tbl1 (field1, field2) VALUES ({}, "{}");'
         vals = [str(uuid.uuid4()),
                 str(uuid.uuid4()),
                 str(uuid.uuid4())]
 
-        self.exec_query('mysql_1', insert_row.format(1,vals[0]))
-        self.exec_query('mysql_1', insert_row.format(1,vals[1]))
+        self.exec_query('mysql_1', insert_row.format(1, vals[0]))
+        self.exec_query('mysql_1', insert_row.format(1, vals[1]))
         self.assert_good_replication(vals[:2])
 
         # kill the primary, make sure we get a new primary
@@ -136,7 +136,7 @@ class MySQLStackTest(AutopilotPatternTest):
         Checks each replica to make sure it has the recently written
         field2 values passed in as the `vals` param.
         """
-        check_row = 'SELECT * FROM tbl1 WHERE field1 = {};'
+        check_row = 'SELECT * FROM tbl1 WHERE `field1`={};'
         check_replica = 'SHOW SLAVE STATUS\G;'
         replicas = self.get_replica_containers()
         for replica in replicas:
@@ -160,8 +160,9 @@ class MySQLStackTest(AutopilotPatternTest):
                 self.assertEqual(len(query_vals), len(vals))
                 for val in vals:
                     self.assertIn(val, query_vals)
-            except (KeyError, IndexError):
-                self.fail('Missing expected results:\n{}'.format(query_result))
+            except (KeyError, IndexError, AssertionError):
+                self.fail('Expected results: {}\nbut got: {}'
+                          .format(vals, query_result))
 
     def get_primary_ip(self):
         """ Get the IP for the primary from Consul. """
@@ -223,13 +224,16 @@ class MySQLStackTest(AutopilotPatternTest):
         if not rows:
             raise Exception('No results found.')
         parsed = []
-        for row in rows:
-            cols = [col.strip() for col in row.split('\t')]
-            row_dict = {}
-            for i, field in enumerate(fields):
-                row_dict[field] = cols[i]
-            parsed.append(row_dict)
-        return parsed
+        try:
+            for row in rows:
+                cols = [col.strip() for col in row.split('\t')]
+                row_dict = {}
+                for i, field in enumerate(fields):
+                    row_dict[field] = cols[i]
+                parsed.append(row_dict)
+            return parsed
+        except IndexError as ex:
+            self.fail(ex)
 
 
 if __name__ == "__main__":
