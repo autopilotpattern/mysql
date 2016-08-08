@@ -1,7 +1,10 @@
 from __future__ import print_function
 import os
+from os.path import expanduser
+import random
 import re
 import subprocess
+import string
 import time
 import unittest
 import uuid
@@ -21,12 +24,13 @@ class MySQLStackTest(AutopilotPatternTest):
         self.set_remote_docker_env()
 
         try:
-            key = '/root/.ssh/id_rsa'
-            self.run_script('/bin/ln', '-s', '/tmp/ssh/TritonTestingKey', key)
+            home = expanduser("~")
+            key = '{}/.ssh/id_rsa'.format(home)
+            self.run_script('ln', '-s', '/tmp/ssh/TritonTestingKey', key)
             pub = self.run_script('/usr/bin/ssh-keygen','-y','-f', key)
             with open('{}.pub'.format(key), 'w') as f:
                 f.write(pub)
-            self.run_script('/src/setup.sh', '/root/.ssh/id_rsa')
+            self.run_script('/src/setup.sh', '{}/.ssh/id_rsa'.format(home))
         except subprocess.CalledProcessError as ex:
             self.fail(ex.output)
 
@@ -36,8 +40,11 @@ class MySQLStackTest(AutopilotPatternTest):
         _manta_role = os.environ.get('MANTA_ROLE', 'triton_mysql')
         _manta_bucket = os.environ.get('MANTA_BUCKET',
                                        '/{}/stor/{}'.format(_manta_user, _manta_subuser))
+
         self.update_env_file(
-            '/src/_env', (
+            '_env', (
+                ('MYSQL_PASSWORD', gen_password()),
+                ('MYSQL_REPL_PASSWORD', gen_password()),
                 ('MANTA_URL', _manta_url),
                 ('MANTA_USER', _manta_user),
                 ('MANTA_SUBUSER', _manta_subuser),
@@ -45,14 +52,11 @@ class MySQLStackTest(AutopilotPatternTest):
                 ('MANTA_BUCKET', _manta_bucket),
             )
         )
-        # TEMP
-        with open('/src/_env', 'a') as e:
-            e.write('LOG_LEVEL=DEBUG')
 
         self.restore_local_docker_env()
 
         # read-in the env file so we can use it in tests
-        env = self.read_env_file('/src/_env')
+        env = self.read_env_file('_env')
         self.user = env.get('MYSQL_USER')
         self.passwd = env.get('MYSQL_PASSWORD')
         self.db = env.get('MYSQL_DATABASE')
@@ -70,11 +74,11 @@ class MySQLStackTest(AutopilotPatternTest):
         """
         # wait until the first instance has configured itself as the
         # the primary
-        self.settle('mysql-primary', 1)
+        self.settle('mysql-primary', 1, timeout=120)
 
         # scale up, make sure we have 2 working replica instances
         self.compose_scale('mysql', 3)
-        self.settle('mysql', 2, timeout=90)
+        self.settle('mysql', 2, timeout=180)
 
         # create a table
         create_table = 'CREATE TABLE tbl1 (field1 INT, field2 VARCHAR(36));'
@@ -94,7 +98,7 @@ class MySQLStackTest(AutopilotPatternTest):
 
         # kill the primary, make sure we get a new primary
         self.docker_stop('mysql_1')
-        self.settle('mysql-primary', 1, timeout=150)
+        self.settle('mysql-primary', 1, timeout=180)
         self.settle('mysql', 1)
 
         # check replication is still working
@@ -234,6 +238,17 @@ class MySQLStackTest(AutopilotPatternTest):
             return parsed
         except IndexError as ex:
             self.fail(ex)
+
+
+
+def gen_password():
+    """
+    When we run the tests on Shippable the setup.sh fails silently
+    and we end up with blank (unworkable) passwords. This appears
+    to be specific to Shippable and not other Docker/Triton envs
+    """
+    return ''.join(random.choice(
+        string.ascii_uppercase + string.digits) for _ in range(10))
 
 
 if __name__ == "__main__":

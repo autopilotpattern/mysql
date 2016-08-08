@@ -10,9 +10,9 @@ RUN apt-get update \
 
 RUN npm install -g triton json
 
-RUN git clone https://github.com/autopilotpattern/testing.git \
+RUN git clone --depth 1 --single-branch -b master \
+        https://github.com/autopilotpattern/testing.git \
     && cd testing \
-    && git checkout python3 \
     && . $HOME/venv/3.5/bin/activate ; pip install -r requirements.txt \
     && . $HOME/venv/3.5/bin/activate; python setup.py install
 

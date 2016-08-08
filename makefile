@@ -84,7 +84,6 @@ test-runner:
 	-rm profile.json
 
 # TODO: replace this user w/ a user specifically for testing
-# TODO: inject the _env file somehow
 ## Run the build container (on Shippable) and deploy tests on Triton
 test: ~/.triton/profiles.d/us-sw-1.json
 	cp tests/tests.py . && \
@@ -92,7 +91,10 @@ test: ~/.triton/profiles.d/us-sw-1.json
 		DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
 		DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
 		COMPOSE_HTTP_TIMEOUT=300 \
-		PATH=/root/venv/3.5/bin:/usr/bin \
+		PATH=/root/venv/3.5/bin:/usr/bin:/bin \
+		MANTA_USER=timgross \
+		MANTA_SUBUSER=triton_mysql \
+		MANTA_ROLE=triton_mysql \
 		$(PYTHON) tests.py
 
 ## Run the build container locally and deploy tests on Triton.
