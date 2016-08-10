@@ -160,6 +160,7 @@ envcheck() {
 test() {
     docker run -it --rm \
            -v $(pwd)/bin:/usr/local/bin \
+           -v $(pwd)/etc/containerpilot.json:/etc/containerpilot.json \
            -w /usr/local/bin \
            my_mysql \
            python test.py

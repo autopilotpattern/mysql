@@ -5,6 +5,7 @@ mysql:
     mem_limit: 512m
     build: .
     environment:
+      - CONSUL_AGENT=1
       - CONSUL=consul
     links:
       - consul:consul
