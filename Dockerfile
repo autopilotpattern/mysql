@@ -1,6 +1,6 @@
 FROM percona:5.6
 
-ENV CONTAINERPILOT_VER 2.3.0
+ENV CONTAINERPILOT_VER 2.4.0
 ENV CONTAINERPILOT file:///etc/containerpilot.json
 
 # By keeping a lot of discrete steps in a single RUN we can clean up after
@@ -31,7 +31,7 @@ RUN set -ex \
     # \
     # Add ContainerPilot and set its configuration file path \
     # \
-    && export CONTAINERPILOT_CHECKSUM=ec9dbedaca9f4a7a50762f50768cbc42879c7208 \
+    && export CONTAINERPILOT_CHECKSUM=dbdad2cd8da8fe6128f8a2d1736f7b051ba70fe6 \
     && curl -Lvo /tmp/containerpilot.tar.gz "https://github.com/joyent/containerpilot/releases/download/${CONTAINERPILOT_VER}/containerpilot-${CONTAINERPILOT_VER}.tar.gz" \
     && echo "${CONTAINERPILOT_CHECKSUM}  /tmp/containerpilot.tar.gz" | sha1sum -c \
     && tar zxf /tmp/containerpilot.tar.gz -C /usr/local/bin \
