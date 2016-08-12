@@ -3,7 +3,6 @@ mysql:
       file: docker-compose.yml
       service: mysql
     mem_limit: 512m
-    build: .
     environment:
       - CONSUL=consul
     links:

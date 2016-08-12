@@ -1,24 +1,67 @@
 from __future__ import print_function
 import os
+from os.path import expanduser
+import random
 import re
 import subprocess
+import string
 import time
 import unittest
 import uuid
 
-from testcases import AutopilotPatternTest, WaitTimeoutError, \
-    dump_environment_to_file
+from testcases import AutopilotPatternTest, WaitTimeoutError
 
 class MySQLStackTest(AutopilotPatternTest):
 
     project_name = 'my'
 
     def setUp(self):
-        self.user = os.environ.get('MYSQL_USER')
-        self.passwd = os.environ.get('MYSQL_PASSWORD')
-        self.db = os.environ.get('MYSQL_DATABASE')
-        self.repl_user = os.environ.get('MYSQL_REPL_USER')
-        self.repl_passwd = os.environ.get('MYSQL_REPL_PASSWORD')
+        """
+        autopilotpattern/mysql setup.sh writes an _env file with a CNS
+        entry and account info for Manta. In local-only testing this fails
+        so we need to set up a temporary remote Docker env
+        """
+        self.set_remote_docker_env()
+
+        try:
+            home = expanduser("~")
+            key = '{}/.ssh/id_rsa'.format(home)
+            self.run_script('ln', '-s', '/tmp/ssh/TritonTestingKey', key)
+            pub = self.run_script('/usr/bin/ssh-keygen','-y','-f', key)
+            with open('{}.pub'.format(key), 'w') as f:
+                f.write(pub)
+            self.run_script('/src/setup.sh', '{}/.ssh/id_rsa'.format(home))
+        except subprocess.CalledProcessError as ex:
+            self.fail(ex.output)
+
+        _manta_url =os.environ.get('MANTA_URL', 'https://us-east.manta.joyent.com')
+        _manta_user = os.environ.get('MANTA_USER', 'triton_mysql')
+        _manta_subuser = os.environ.get('MANTA_SUBUSER', 'triton_mysql')
+        _manta_role = os.environ.get('MANTA_ROLE', 'triton_mysql')
+        _manta_bucket = os.environ.get('MANTA_BUCKET',
+                                       '/{}/stor/{}'.format(_manta_user, _manta_subuser))
+
+        self.update_env_file(
+            '_env', (
+                ('MYSQL_PASSWORD', gen_password()),
+                ('MYSQL_REPL_PASSWORD', gen_password()),
+                ('MANTA_URL', _manta_url),
+                ('MANTA_USER', _manta_user),
+                ('MANTA_SUBUSER', _manta_subuser),
+                ('MANTA_ROLE', _manta_role),
+                ('MANTA_BUCKET', _manta_bucket),
+            )
+        )
+
+        self.restore_local_docker_env()
+
+        # read-in the env file so we can use it in tests
+        env = self.read_env_file('_env')
+        self.user = env.get('MYSQL_USER')
+        self.passwd = env.get('MYSQL_PASSWORD')
+        self.db = env.get('MYSQL_DATABASE')
+        self.repl_user = env.get('MYSQL_REPL_USER')
+        self.repl_passwd = env.get('MYSQL_REPL_PASSWORD')
 
     def test_replication_and_failover(self):
         """
@@ -31,11 +74,11 @@ class MySQLStackTest(AutopilotPatternTest):
         """
         # wait until the first instance has configured itself as the
         # the primary
-        self.settle('mysql-primary', 1)
+        self.settle('mysql-primary', 1, timeout=120)
 
         # scale up, make sure we have 2 working replica instances
         self.compose_scale('mysql', 3)
-        self.settle('mysql', 2, timeout=90)
+        self.settle('mysql', 2, timeout=180)
 
         # create a table
         create_table = 'CREATE TABLE tbl1 (field1 INT, field2 VARCHAR(36));'
@@ -44,18 +87,18 @@ class MySQLStackTest(AutopilotPatternTest):
         # check replication is working by writing rows to the primary
         # and verifying they show up in the replicas
 
-        insert_row = "INSERT INTO tbl1 VALUES ({},'{}');"
+        insert_row = 'INSERT INTO tbl1 (field1, field2) VALUES ({}, "{}");'
         vals = [str(uuid.uuid4()),
                 str(uuid.uuid4()),
                 str(uuid.uuid4())]
 
-        self.exec_query('mysql_1', insert_row.format(1,vals[0]))
-        self.exec_query('mysql_1', insert_row.format(1,vals[1]))
+        self.exec_query('mysql_1', insert_row.format(1, vals[0]))
+        self.exec_query('mysql_1', insert_row.format(1, vals[1]))
         self.assert_good_replication(vals[:2])
 
         # kill the primary, make sure we get a new primary
         self.docker_stop('mysql_1')
-        self.settle('mysql-primary', 1, timeout=150)
+        self.settle('mysql-primary', 1, timeout=180)
         self.settle('mysql', 1)
 
         # check replication is still working
@@ -97,7 +140,7 @@ class MySQLStackTest(AutopilotPatternTest):
         Checks each replica to make sure it has the recently written
         field2 values passed in as the `vals` param.
         """
-        check_row = 'SELECT * FROM tbl1 WHERE field1 = {};'
+        check_row = 'SELECT * FROM tbl1 WHERE `field1`={};'
         check_replica = 'SHOW SLAVE STATUS\G;'
         replicas = self.get_replica_containers()
         for replica in replicas:
@@ -121,8 +164,9 @@ class MySQLStackTest(AutopilotPatternTest):
                 self.assertEqual(len(query_vals), len(vals))
                 for val in vals:
                     self.assertIn(val, query_vals)
-            except (KeyError, IndexError):
-                self.fail('Missing expected results:\n{}'.format(query_result))
+            except (KeyError, IndexError, AssertionError):
+                self.fail('Expected results: {}\nbut got: {}'
+                          .format(vals, query_result))
 
     def get_primary_ip(self):
         """ Get the IP for the primary from Consul. """
@@ -184,15 +228,28 @@ class MySQLStackTest(AutopilotPatternTest):
         if not rows:
             raise Exception('No results found.')
         parsed = []
-        for row in rows:
-            cols = [col.strip() for col in row.split('\t')]
-            row_dict = {}
-            for i, field in enumerate(fields):
-                row_dict[field] = cols[i]
-            parsed.append(row_dict)
-        return parsed
+        try:
+            for row in rows:
+                cols = [col.strip() for col in row.split('\t')]
+                row_dict = {}
+                for i, field in enumerate(fields):
+                    row_dict[field] = cols[i]
+                parsed.append(row_dict)
+            return parsed
+        except IndexError as ex:
+            self.fail(ex)
+
+
+
+def gen_password():
+    """
+    When we run the tests on Shippable the setup.sh fails silently
+    and we end up with blank (unworkable) passwords. This appears
+    to be specific to Shippable and not other Docker/Triton envs
+    """
+    return ''.join(random.choice(
+        string.ascii_uppercase + string.digits) for _ in range(10))
 
 
 if __name__ == "__main__":
-    dump_environment_to_file('/src/_env')
     unittest.main()

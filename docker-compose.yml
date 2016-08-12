@@ -1,5 +1,5 @@
 mysql:
-    image: autopilotpattern/mysql:latest
+    image: autopilotpattern/mysql
     mem_limit: 4g
     restart: always
     # expose for linking, but each container gets a private IP for
