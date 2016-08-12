@@ -9,6 +9,37 @@ manage.USE_STANDBY = False
 HOST_NAME = socket.gethostname()
 NAME = manage.get_name()
 
+class TestContainerPilotConfig(unittest.TestCase):
+
+    def setUp(self):
+        self._old_consul = os.environ.get('CONSUL', '')
+        self._old_consul_agent = os.environ.get('CONSUL_AGENT', '')
+        os.environ['CONSUL'] = 'my.consul.example.com'
+
+    def tearDown(self):
+        os.environ['CONSUL'] = self._old_consul
+        os.environ['CONSUL_AGENT'] = self._old_consul_agent
+
+    def test_parse_with_consul_agent(self):
+        os.environ['CONSUL_AGENT'] = '1'
+        cp = manage.ContainerPilot(None)
+        self.assertEqual(cp.config['consul'], 'localhost:8500')
+        cmd = cp.config['coprocesses'][0]['command']
+        host_cfg_idx = cmd.index('-retry-join') + 1
+        self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com:8500')
+
+    def test_parse_without_consul_agent(self):
+        os.environ['CONSUL_AGENT'] = '0'
+        cp = manage.ContainerPilot(None)
+        self.assertEqual(cp.config['consul'], 'my.consul.example.com:8500')
+        self.assertEqual(cp.config['coprocesses'], [])
+
+        os.environ['CONSUL_AGENT'] = ''
+        cp = manage.ContainerPilot(None)
+        self.assertEqual(cp.config['consul'], 'my.consul.example.com:8500')
+        self.assertEqual(cp.config['coprocesses'], [])
+
+
 class TestAssertInitialization(unittest.TestCase):
 
     def setUp(self):

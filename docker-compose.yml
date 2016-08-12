@@ -11,6 +11,7 @@ mysql:
     env_file: _env
     environment:
       - CONTAINERPILOT=file:///etc/containerpilot.json
+      - CONSUL_AGENT=1
 
 consul:
     image: progrium/consul:latest

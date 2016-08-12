@@ -57,6 +57,21 @@ def debug(fn):
         return out
     return wrapper
 
+def get_environ_flag(key, default):
+    """
+    Parse environment variable strings like "yes/no", "on/off",
+    "true/false", "1/0" into a bool.
+    """
+    val = get_environ(key, default)
+    try:
+        return bool(int(val))
+    except ValueError:
+        val = val.lower()
+        if val in ('false', 'off', 'no'):
+            return False
+        # non-"1" or "0" string, we'll treat as truthy
+        return bool(val)
+
 def get_environ(key, default):
     """
     Gets an environment variable, trims away comments and whitespace,
@@ -71,7 +86,18 @@ def get_environ(key, default):
         # just swallow AttributeErrors for non-strings
         return val
 
-consul = pyconsul.Consul(host=os.environ.get('CONSUL', 'consul'))
+def get_consul_host():
+    """
+    Get the Consul hostname based on whether or not we're using a local
+    Consul agent.
+    """
+    if get_environ_flag('CONSUL_AGENT', False):
+        return 'localhost'
+    else:
+        return get_environ('CONSUL', 'consul')
+
+consul = pyconsul.Consul(host=get_consul_host())
+
 config = None
 
 # consts for node state
@@ -161,9 +187,9 @@ class MySQLConfig(object):
         self.mysql_user = get_environ('MYSQL_USER', None)
         self.mysql_password = get_environ('MYSQL_PASSWORD', None)
         self.mysql_root_password = get_environ('MYSQL_ROOT_PASSWORD', '')
-        self.mysql_random_root_password = self._parse_environ_bool(
+        self.mysql_random_root_password = get_environ_flag(
             'MYSQL_RANDOM_ROOT_PASSWORD', True)
-        self.mysql_onetime_password = self._parse_environ_bool(
+        self.mysql_onetime_password = get_environ_flag(
             'MYSQL_ONETIME_PASSWORD', False)
         self.repl_user = get_environ('MYSQL_REPL_USER', None)
         self.repl_password = get_environ('MYSQL_REPL_PASSWORD', None)
@@ -172,22 +198,6 @@ class MySQLConfig(object):
         # make sure that if we've pulled in an external data volume that
         # the mysql user can read it
         take_ownership(self)
-
-    def _parse_environ_bool(self, var, default=True):
-        """
-        Parse environment variable strings like "yes/no", "on/off",
-        "true/false", "1/0" into a bool.
-        """
-        val = get_environ(var, default)
-        try:
-            return bool(int(val))
-        except ValueError:
-            val = val.lower()
-            if val in ('false', 'off', 'no'):
-                return False
-            # non-"1" or "0" string, we'll treat as truthy
-            return True
-
 
     def render(self):
         """
@@ -267,12 +277,27 @@ class ContainerPilot(object):
     """
 
     def __init__(self, node):
-        # TODO: we should make sure we can support JSON-in-env-var
-        # the same as ContainerPilot itself
         self.node = node
         self.path = get_environ('CONTAINERPILOT', None).replace('file://', '')
         with open(self.path, 'r') as f:
-            self.config = json.loads(f.read())
+            cfg = f.read()
+
+        # remove templating so that we can parse it as JSON; we'll
+        # override the attributes directly in the resulting dict
+        cfg = cfg.replace('[{{ if .CONSUL_AGENT }}', '[')
+        cfg = cfg.replace('}{{ end }}', '}')
+
+        self.config = json.loads(cfg)
+
+        self.config['consul'] = '{}:8500'.format(get_consul_host())
+        if get_environ_flag('CONSUL_AGENT', False):
+            _consul_host = '{}'.format(get_environ('CONSUL', 'consul'))
+            cmd = self.config['coprocesses'][0]['command']
+            host_cfg_idx = cmd.index('-retry-join') + 1
+            cmd[host_cfg_idx] = _consul_host
+            self.config['coprocesses'][0]['command'] = cmd
+        else:
+            self.config['coprocesses'] = []
 
     @debug
     def update(self):
@@ -286,6 +311,7 @@ class ContainerPilot(object):
     def render(self):
         new_config = json.dumps(self.config)
         with open(self.path, 'w') as f:
+            log.info('rewriting ContainerPilot config: %s', new_config)
             f.write(new_config)
 
     def reload(self):
@@ -833,8 +859,14 @@ def update_session_ttl(session_id=None):
 def has_snapshot():
     """ Ask Consul for 'last backup' key """
     try:
-        last_backup_id = get_from_consul(LAST_BACKUP_KEY)
-        return last_backup_id
+        # Because we're in pre_start we can't rely on any
+        # co-process Consul to be started yet so we have to
+        # to use the "true" Consul host.
+        _consul = pyconsul.Consul(host=get_environ('CONSUL', 'consul'))
+        result = _consul.kv.get(LAST_BACKUP_KEY)
+        if result[1]:
+            return result[1]['Value']
+        return None
     except pyconsul.base.ConsulException:
         # Consul isn't up yet
         return None

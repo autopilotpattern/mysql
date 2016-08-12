@@ -4,6 +4,7 @@ mysql:
       service: mysql
     mem_limit: 512m
     environment:
+      - CONSUL_AGENT=1
       - CONSUL=consul
     links:
       - consul:consul
