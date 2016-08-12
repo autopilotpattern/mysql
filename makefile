@@ -31,6 +31,8 @@ build:
 ## Pushes the application container image to the Docker Hub
 ship:
 	docker push autopilotpattern/mysql:$(TAG)
+	docker tag autopilotpattern/mysql:$(TAG) autopilotpattern/mysql:latest
+	docker push autopilotpattern/mysql:latest
 
 
 # ------------------------------------------------
