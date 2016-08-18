@@ -28,10 +28,12 @@ TAG := $(BRANCH)-$(COMMIT)
 build:
 	docker build -t=autopilotpattern/mysql:$(TAG) .
 
-## Pushes the application container image to the Docker Hub
-ship:
-	docker push autopilotpattern/mysql:$(TAG)
+tag:
 	docker tag autopilotpattern/mysql:$(TAG) autopilotpattern/mysql:latest
+
+## Pushes the application container image to the Docker Hub
+ship: tag
+	docker push autopilotpattern/mysql:$(TAG)
 	docker push autopilotpattern/mysql:latest
 
 
