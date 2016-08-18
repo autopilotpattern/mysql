@@ -34,6 +34,9 @@ manta_logger.setLevel(logging.INFO)
 
 log = logging.getLogger('manage.py')
 
+class WaitTimeoutError(Exception):
+    """ Exception raised when a timeout occurs. """
+    pass
 
 def debug(fn):
     """
@@ -665,7 +668,7 @@ def mark_with_session(key, val, session_id, timeout=10):
         except Exception:
             timeout = timeout - 1
             time.sleep(1)
-    raise Exception('Could not reach Consul.')
+    raise WaitTimeoutError('Could not reach Consul.')
 
 # ---------------------------------------------------------
 # functions to support initialization
@@ -867,20 +870,24 @@ def update_session_ttl(session_id=None):
     consul.session.renew(session_id)
 
 @debug
-def has_snapshot():
+def has_snapshot(timeout=60):
     """ Ask Consul for 'last backup' key """
-    try:
-        # Because we're in pre_start we can't rely on any
-        # co-process Consul to be started yet so we have to
-        # to use the "true" Consul host.
-        _consul = pyconsul.Consul(host=get_environ('CONSUL', 'consul'))
-        result = _consul.kv.get(LAST_BACKUP_KEY)
-        if result[1]:
-            return result[1]['Value']
-        return None
-    except pyconsul.base.ConsulException:
-        # Consul isn't up yet
-        return None
+    while timeout > 0:
+        try:
+            # Because we're in pre_start we can't rely on any
+            # co-process Consul to be started yet so we have to
+            # to use the "true" Consul host.
+            _consul = pyconsul.Consul(host=get_environ('CONSUL', 'consul'))
+            result = _consul.kv.get(LAST_BACKUP_KEY)
+            if result[1]:
+                return result[1]['Value']
+            return None
+        except pyconsul.base.ConsulException:
+            # Consul isn't up yet
+            timeout -= 1
+            time.sleep(1)
+    raise WaitTimeoutError('Could not contact Consul to check '
+                           'for snapshot after %s seconds', timeout)
 
 @debug
 def get_snapshot(filename):
