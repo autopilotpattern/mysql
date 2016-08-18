@@ -17,6 +17,14 @@
       "onChange": "python /usr/local/bin/manage.py on_change"
     }
   ],
+  "tasks": [
+    {
+      "name": "snapshot_check",
+      "command": "python /usr/local/bin/manage.py snapshot_task",
+      "frequency": "10s",
+      "timeout": "10m"
+    }
+  ],
   "coprocesses": [{{ if .CONSUL_AGENT }}
     {
       "command": ["/usr/local/bin/consul", "agent",

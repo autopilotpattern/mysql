@@ -381,24 +381,6 @@ def health():
         if node.is_primary() or node.is_standby():
             update_session_ttl()
 
-        # Create a snapshot and send it to the object store if this is the
-        # node and time to do so.
-        # TODO: move this section to a periodic task handler when that lands
-        # (ref https://github.com/joyent/containerpilot/pull/134) in
-        # ContainerPilot so we don't block the health check.
-        if all((node.is_snapshot_node(),
-                (not is_backup_running()),
-                (is_binlog_stale(node.conn) or is_time_for_snapshot()))):
-            try:
-                write_snapshot(node.conn)
-            except Exception as ex:
-                # we're going to log but not sys.exit(1) here so that
-                # we don't mark the primary as unhealthy when a backup
-                # fails. The BACKUP_TTL_KEY will expire so we can alert
-                # on that externally.
-                log.exception(ex)
-        # / TODO: end of section to move to periodic task
-
         mysql_query(node.conn, 'SELECT 1', ())
     except Exception as ex:
         log.exception(ex)
@@ -470,6 +452,35 @@ def on_change():
             log.debug(ex)
             time.sleep(1) # avoid hammering Consul
             continue
+
+@debug
+def snapshot_task():
+    """
+    Create a snapshot and send it to the object store if this is the
+    node and time to do so.
+    """
+    node = MySQLNode()
+    cp = ContainerPilot(node)
+    cp.update() # this will populate MySQLNode state correctly
+
+    if not node.is_snapshot_node() or is_backup_running():
+        # bail-out early if we can avoid making a DB connection
+        return
+
+    ctx = dict(user=config.repl_user,
+               password=config.repl_password,
+               timeout=cp.config['services'][0]['ttl'])
+    node.conn = wait_for_connection(**ctx)
+
+    if is_binlog_stale(node.conn) or is_time_for_snapshot():
+        try:
+            write_snapshot(node.conn)
+        except Exception as ex:
+            # we're going to log and then sys.exit(1) here. The task
+            # will fail and when the BACKUP_TTL_KEY expires we can alert
+            # on that externally.
+            log.exception(ex)
+            sys.exit(1)
 
 @debug
 def create_snapshot():
