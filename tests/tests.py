@@ -2,15 +2,18 @@ from __future__ import print_function
 import os
 from os.path import expanduser
 import random
-import re
 import subprocess
 import string
+import sys
 import time
 import unittest
 import uuid
 
 from testcases import AutopilotPatternTest, WaitTimeoutError
 
+UNIT_ONLY=False
+
+@unittest.skipIf(UNIT_ONLY, "running only unit tests")
 class MySQLStackTest(AutopilotPatternTest):
 
     project_name = 'my'
@@ -239,7 +242,8 @@ class MySQLStackTest(AutopilotPatternTest):
         except IndexError as ex:
             self.fail(ex)
 
-
+# ------------------------------------------------
+# helper functions
 
 def gen_password():
     """
@@ -252,4 +256,8 @@ def gen_password():
 
 
 if __name__ == "__main__":
+
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "unit":
+            UNIT_ONLY=True
     unittest.main()
