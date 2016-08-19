@@ -17,5 +17,6 @@ RUN git clone --depth 1 --single-branch -b master \
     && . $HOME/venv/3.5/bin/activate; python setup.py install
 
 COPY tests/tests.py /src/tests.py
+COPY bin/manage.py /src/manage.py
 COPY docker-compose.yml /src/docker-compose.yml
 COPY setup.sh /src/setup.sh

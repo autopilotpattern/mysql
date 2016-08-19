@@ -120,6 +120,14 @@ test-local-docker:
 		$(MANTA_CONFIG) \
 		$(LOCALRUN) $(PYTHON) tests.py
 
+unit-test:
+	docker run -it --rm -w /usr/local/bin \
+		-e LOG_LEVEL=DEBUG \
+		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
+		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
+		autopilotpattern/mysql:$(TAG) \
+		python test.py
+
 shell:
 	docker run -it --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \
