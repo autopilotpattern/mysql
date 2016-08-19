@@ -298,7 +298,7 @@ class ContainerPilot(object):
 
         self.config['consul'] = '{}:8500'.format(get_consul_host())
         if get_environ_flag('CONSUL_AGENT', False):
-            _consul_host = '{}'.format(get_environ('CONSUL', 'consul'))
+            _consul_host = '{}:8500'.format(get_environ('CONSUL', 'consul'))
             cmd = self.config['coprocesses'][0]['command']
             host_cfg_idx = cmd.index('-retry-join') + 1
             cmd[host_cfg_idx] = _consul_host

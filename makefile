@@ -120,6 +120,7 @@ test-local-docker:
 		$(MANTA_CONFIG) \
 		$(LOCALRUN) $(PYTHON) tests.py
 
+## Run the unit tests inside the mysql container
 unit-test:
 	docker run -it --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
