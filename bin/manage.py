@@ -38,27 +38,31 @@ class WaitTimeoutError(Exception):
     """ Exception raised when a timeout occurs. """
     pass
 
-def debug(fn):
+def debug(fn=None, name=None):
     """
     Function/method decorator to trace calls via debug logging.
     Is a pass-thru if we're not at LOG_LEVEL=DEBUG. Normally this
     would have a lot of perf impact but this application doesn't
     have significant throughput.
     """
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        try:
-            # because we have concurrent processes running we want
-            # to tag each stack with an identifier for that process
-            arg = "[{}]".format(sys.argv[1])
-        except IndexError:
-            arg = "[pre_start]"
-        name = '{}{}{}'.format(arg, (len(inspect.stack()) * " "), fn.__name__)
-        log.debug('%s' % name)
-        out = apply(fn, args, kwargs)
-        log.debug('%s: %s', name, out)
-        return out
-    return wrapper
+    def _decorate(fn, *args, **kwargs):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                # because we have concurrent processes running we want
+                # to tag each stack with an identifier for that process
+                arg = "[{}]".format(sys.argv[1])
+            except IndexError:
+                arg = "[pre_start]"
+            name = kwargs.get('name', fn.__name__)
+            log.debug('%s %s start', arg, name)
+            out = apply(fn, args, kwargs)
+            log.debug('%s %s end', arg, name)
+            return out
+        return wrapper
+    if fn:
+        return _decorate(fn)
+    return _decorate
 
 def get_environ_flag(key, default):
     """
@@ -302,7 +306,7 @@ class ContainerPilot(object):
         else:
             self.config['coprocesses'] = []
 
-    @debug
+    @debug(name='ContainerPilot.update')
     def update(self):
         state = self.node.get_state()
         if state and self.config['services'][0]['name'] != state:
@@ -310,7 +314,7 @@ class ContainerPilot(object):
             self.render()
             return True
 
-    @debug
+    @debug(name='ContainerPilot.render')
     def render(self):
         new_config = json.dumps(self.config)
         with open(self.path, 'w') as f:
@@ -1048,6 +1052,7 @@ def get_primary_node(timeout=10):
     raise ex
 
 
+@debug
 def get_standby_node(timeout=10):
     while timeout > 0:
         try:
