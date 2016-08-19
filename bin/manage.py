@@ -514,8 +514,8 @@ def create_snapshot():
         log.info('snapshot completed, uploading to object store')
         manta_config.put_backup(backup_id, '/tmp/backup.tar')
 
-        log.debug('snapshot uploaded to {}/{}, setting LAST_BACKUP_KEY'
-                  ' in Consul'.format(manta_config.bucket, backup_id))
+        log.debug('snapshot uploaded to %s/%s, setting LAST_BACKUP_KEY'
+                  ' in Consul' % (manta_config.bucket, backup_id))
         consul.kv.put(LAST_BACKUP_KEY, backup_id)
 
         ctx = dict(user=config.repl_user,
@@ -661,6 +661,7 @@ def wait_for_connection(user='root', password=None, database=None, timeout=30):
         except pymysql.err.OperationalError:
             timeout = timeout - 1
             if timeout == 0:
+                # re-raise MySQL error
                 raise
             time.sleep(1)
 
@@ -1049,8 +1050,7 @@ def get_primary_node(timeout=10):
         except Exception as ex:
             timeout = timeout - 1
             time.sleep(1)
-    raise ex
-
+    raise WaitTimeoutError(ex)
 
 @debug
 def get_standby_node(timeout=10):
@@ -1065,7 +1065,7 @@ def get_standby_node(timeout=10):
         except Exception as ex:
             timeout = timeout - 1
             time.sleep(1)
-    raise ex
+    raise WaitTimeoutError(ex)
 
 def get_from_consul(key):
     """
