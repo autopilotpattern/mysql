@@ -122,7 +122,7 @@ test-local-docker:
 
 ## Run the unit tests inside the mysql container
 unit-test:
-	docker run -it --rm -w /usr/local/bin \
+	docker run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
 		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
