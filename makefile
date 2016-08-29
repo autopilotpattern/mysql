@@ -28,10 +28,12 @@ TAG := $(BRANCH)-$(COMMIT)
 build:
 	docker build -t=autopilotpattern/mysql:$(TAG) .
 
-## Pushes the application container image to the Docker Hub
-ship:
-	docker push autopilotpattern/mysql:$(TAG)
+tag:
 	docker tag autopilotpattern/mysql:$(TAG) autopilotpattern/mysql:latest
+
+## Pushes the application container image to the Docker Hub
+ship: tag
+	docker push autopilotpattern/mysql:$(TAG)
 	docker push autopilotpattern/mysql:latest
 
 
@@ -117,6 +119,15 @@ test-local-docker:
 		-e COMPOSE_FILE=local-compose.yml \
 		$(MANTA_CONFIG) \
 		$(LOCALRUN) $(PYTHON) tests.py
+
+## Run the unit tests inside the mysql container
+unit-test:
+	docker run -it --rm -w /usr/local/bin \
+		-e LOG_LEVEL=DEBUG \
+		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
+		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
+		autopilotpattern/mysql:$(TAG) \
+		python test.py
 
 shell:
 	docker run -it --rm \

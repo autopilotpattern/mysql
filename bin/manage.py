@@ -38,27 +38,31 @@ class WaitTimeoutError(Exception):
     """ Exception raised when a timeout occurs. """
     pass
 
-def debug(fn):
+def debug(fn=None, name=None):
     """
     Function/method decorator to trace calls via debug logging.
     Is a pass-thru if we're not at LOG_LEVEL=DEBUG. Normally this
     would have a lot of perf impact but this application doesn't
     have significant throughput.
     """
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        try:
-            # because we have concurrent processes running we want
-            # to tag each stack with an identifier for that process
-            arg = "[{}]".format(sys.argv[1])
-        except IndexError:
-            arg = "[pre_start]"
-        name = '{}{}{}'.format(arg, (len(inspect.stack()) * " "), fn.__name__)
-        log.debug('%s' % name)
-        out = apply(fn, args, kwargs)
-        log.debug('%s: %s', name, out)
-        return out
-    return wrapper
+    def _decorate(fn, *args, **kwargs):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                # because we have concurrent processes running we want
+                # to tag each stack with an identifier for that process
+                arg = "[{}]".format(sys.argv[1])
+            except IndexError:
+                arg = "[pre_start]"
+            name = kwargs.get('name', fn.__name__)
+            log.debug('%s %s start', arg, name)
+            out = apply(fn, args, kwargs)
+            log.debug('%s %s end', arg, name)
+            return out
+        return wrapper
+    if fn:
+        return _decorate(fn)
+    return _decorate
 
 def get_environ_flag(key, default):
     """
@@ -294,7 +298,7 @@ class ContainerPilot(object):
 
         self.config['consul'] = '{}:8500'.format(get_consul_host())
         if get_environ_flag('CONSUL_AGENT', False):
-            _consul_host = '{}'.format(get_environ('CONSUL', 'consul'))
+            _consul_host = '{}:8500'.format(get_environ('CONSUL', 'consul'))
             cmd = self.config['coprocesses'][0]['command']
             host_cfg_idx = cmd.index('-retry-join') + 1
             cmd[host_cfg_idx] = _consul_host
@@ -302,7 +306,7 @@ class ContainerPilot(object):
         else:
             self.config['coprocesses'] = []
 
-    @debug
+    @debug(name='ContainerPilot.update')
     def update(self):
         state = self.node.get_state()
         if state and self.config['services'][0]['name'] != state:
@@ -310,7 +314,7 @@ class ContainerPilot(object):
             self.render()
             return True
 
-    @debug
+    @debug(name='ContainerPilot.render')
     def render(self):
         new_config = json.dumps(self.config)
         with open(self.path, 'w') as f:
@@ -510,8 +514,8 @@ def create_snapshot():
         log.info('snapshot completed, uploading to object store')
         manta_config.put_backup(backup_id, '/tmp/backup.tar')
 
-        log.debug('snapshot uploaded to {}/{}, setting LAST_BACKUP_KEY'
-                  ' in Consul'.format(manta_config.bucket, backup_id))
+        log.debug('snapshot uploaded to %s/%s, setting LAST_BACKUP_KEY'
+                  ' in Consul' % (manta_config.bucket, backup_id))
         consul.kv.put(LAST_BACKUP_KEY, backup_id)
 
         ctx = dict(user=config.repl_user,
@@ -657,6 +661,7 @@ def wait_for_connection(user='root', password=None, database=None, timeout=30):
         except pymysql.err.OperationalError:
             timeout = timeout - 1
             if timeout == 0:
+                # re-raise MySQL error
                 raise
             time.sleep(1)
 
@@ -1045,9 +1050,9 @@ def get_primary_node(timeout=10):
         except Exception as ex:
             timeout = timeout - 1
             time.sleep(1)
-    raise ex
+    raise WaitTimeoutError(ex)
 
-
+@debug
 def get_standby_node(timeout=10):
     while timeout > 0:
         try:
@@ -1060,7 +1065,7 @@ def get_standby_node(timeout=10):
         except Exception as ex:
             timeout = timeout - 1
             time.sleep(1)
-    raise ex
+    raise WaitTimeoutError(ex)
 
 def get_from_consul(key):
     """

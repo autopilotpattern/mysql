@@ -13,6 +13,7 @@ build:
   # run integration tests using Docker Compose
   ci:
     - make build
+    - make unit-test
     - make test
 
   # send the containers to the Docker Hub

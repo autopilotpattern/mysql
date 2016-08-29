@@ -6,6 +6,7 @@ mysql:
     environment:
       - CONSUL_AGENT=1
       - CONSUL=consul
+      - LOG_LEVEL
     links:
       - consul:consul
     ports:

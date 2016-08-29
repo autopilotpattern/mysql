@@ -1,6 +1,6 @@
 FROM percona:5.6
 
-ENV CONTAINERPILOT_VER 2.4.0
+ENV CONTAINERPILOT_VER 2.4.1
 ENV CONTAINERPILOT file:///etc/containerpilot.json
 
 # By keeping a lot of discrete steps in a single RUN we can clean up after
@@ -19,6 +19,7 @@ RUN set -ex \
        PyMySQL==0.6.7 \
        python-Consul==0.4.7 \
        manta==2.5.0 \
+       mock==2.0.0 \
     # \
     # Add Consul from https://releases.hashicorp.com/consul \
     # \
@@ -31,7 +32,7 @@ RUN set -ex \
     # \
     # Add ContainerPilot and set its configuration file path \
     # \
-    && export CONTAINERPILOT_CHECKSUM=dbdad2cd8da8fe6128f8a2d1736f7b051ba70fe6 \
+    && export CONTAINERPILOT_CHECKSUM=198d96c8d7bfafb1ab6df96653c29701510b833c \
     && curl -Lvo /tmp/containerpilot.tar.gz "https://github.com/joyent/containerpilot/releases/download/${CONTAINERPILOT_VER}/containerpilot-${CONTAINERPILOT_VER}.tar.gz" \
     && echo "${CONTAINERPILOT_CHECKSUM}  /tmp/containerpilot.tar.gz" | sha1sum -c \
     && tar zxf /tmp/containerpilot.tar.gz -C /usr/local/bin \

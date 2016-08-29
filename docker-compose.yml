@@ -12,6 +12,7 @@ mysql:
     environment:
       - CONTAINERPILOT=file:///etc/containerpilot.json
       - CONSUL_AGENT=1
+      - LOG_LEVEL
 
 consul:
     image: progrium/consul:latest
