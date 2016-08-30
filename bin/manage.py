@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 
-import pymysql
+import mysql.connector as mysqlconn
 import consul as pyconsul
 import manta
 
@@ -445,7 +445,7 @@ def on_change():
             set_primary_for_replica(node.conn)
             return
 
-        except pymysql.err.InternalError as ex:
+        except mysqlconn.Error as ex:
             # MySQL Error code 1198: ER_SLAVE_MUST_STOP
             # ref https://dev.mysql.com/doc/refman/5.6/en/error-messages-server.html
             # This arises because the health check has already passed thru
@@ -652,13 +652,13 @@ def wait_for_connection(user='root', password=None, database=None, timeout=30):
     while timeout > 0:
         try:
             sock = '/var/run/mysqld/mysqld.sock'
-            return pymysql.connect(unix_socket=sock,
+            return mysqlconn.connect(unix_socket=sock,
                                    user=user,
                                    password=password,
                                    database=database,
                                    charset='utf8',
-                                   connect_timeout=timeout)
-        except pymysql.err.OperationalError:
+                                   connection_timeout=timeout)
+        except mysqlconn.Error:
             timeout = timeout - 1
             if timeout == 0:
                 # re-raise MySQL error
@@ -740,13 +740,29 @@ def setup_root_user(conn):
                           for _ in range(20)])
         config.mysql_root_password = passwd
         log.info('Generated root password: %s', config.mysql_root_password)
-    sql = ('SET @@SESSION.SQL_LOG_BIN=0;'
-           'DELETE FROM `mysql`.`user` where user != \'mysql.sys\';'
-           'CREATE USER `root`@`%%` IDENTIFIED BY %s ;'
-           'GRANT ALL ON *.* TO `root`@`%%` WITH GRANT OPTION ;'
-           'DROP DATABASE IF EXISTS test ;'
-           'FLUSH PRIVILEGES ;')
-    mysql_exec(conn, sql, (config.mysql_root_password,))
+    try:
+        sql = (
+            ('SET @@SESSION.SQL_LOG_BIN=0;', ()),
+            ('DELETE FROM `mysql`.`user` where user != \'mysql.sys\';', ()),
+            ('CREATE USER `root`@`%%` IDENTIFIED BY %s ;',
+             (config.mysql_root_password,)
+            ),
+            ('GRANT ALL ON *.* TO `root`@`%%` WITH GRANT OPTION ;', ()),
+            ('DROP DATABASE IF EXISTS test ;', ()),
+            ('FLUSH PRIVILEGES ;', ())
+        )
+        cur = conn.cursor()
+        for stmt, params in sql:
+            cur.execute(stmt, params=params)
+
+        conn.commit()
+    except:
+        # this is unrecoverable situation so just let the exceptions
+        # bubble up to the caller
+        raise
+    finally:
+        cur.close()
+
 
 def expire_root_password(conn):
     if config.mysql_onetime_password:
@@ -762,29 +778,47 @@ def create_default_user(conn):
         log.error('No default user/password configured.')
         return
 
-    # PyMySQL doesn't treat symbols the same as strings when passing
-    # parameters, so we need to build the SQL string like this.
-    # ref https://github.com/PyMySQL/PyMySQL/issues/271
-    sql = 'CREATE USER `{}`@`%%` IDENTIFIED BY %s; '.format(config.mysql_user)
-    if config.mysql_db:
-        sql += ('GRANT ALL ON `{}`.* TO `{}`@`%%`; '
-                .format(config.mysql_db, config.mysql_user))
-    sql += 'FLUSH PRIVILEGES;'
-    mysql_exec(conn, sql, (config.mysql_password,))
+    try:
+        cur = conn.cursor()
 
+        # there's some kind of annoying encoding bug in the lib here
+        # so we have to format the string rather than passing it as
+        # a param. totally safe, I bet.
+        cur.execute('CREATE USER `{}`@`%%` IDENTIFIED BY %s; '
+                    .format(config.mysql_user), (config.mysql_password,))
+        if config.mysql_db:
+            cur.execute('GRANT ALL ON `{}`.* TO `{}`@`%%`; '
+                        .format(config.mysql_db, config.mysql_user))
+        cur.execute('FLUSH PRIVILEGES;')
+        conn.commit()
+    except:
+        # this is unrecoverable situation so just let the exceptions
+        # bubble up to the caller
+        raise
+    finally:
+        cur.close()
 
 def create_repl_user(conn):
     """ this user will be used for both replication and backups """
     if not config.repl_user or not config.repl_password:
         log.error('No replication user/password configured.')
         return
-    mysql_exec(
-        conn,
-        ('CREATE USER `{0}`@`%%` IDENTIFIED BY %s; '
-         'GRANT SUPER, REPLICATION SLAVE, RELOAD, LOCK TABLES, REPLICATION CLIENT '
-         'ON *.* TO `{0}`@`%%`; '
-         'FLUSH PRIVILEGES;'.format(config.repl_user)),
-        (config.repl_password,))
+
+    try:
+        cur = conn.cursor()
+        cur.execute('CREATE USER `{}`@`%%` IDENTIFIED BY %s; '
+                    .format(config.repl_user), (config.repl_password,))
+        cur.execute('GRANT SUPER, REPLICATION SLAVE, RELOAD, LOCK TABLES'
+                    ', REPLICATION CLIENT ON *.* TO `{}`@`%%`; '
+                    .format(config.repl_user))
+        cur.execute('FLUSH PRIVILEGES;')
+        conn.commit()
+    except:
+        # this is unrecoverable situation so just let the exceptions
+        # bubble up to the caller
+        raise
+    finally:
+        cur.close()
 
 
 def set_timezone_info():
@@ -1007,9 +1041,20 @@ def set_primary_for_replica(conn):
            'MASTER_PORT           = 3306, '
            'MASTER_CONNECT_RETRY  = 60, '
            'MASTER_AUTO_POSITION  = 1, '
-           'MASTER_SSL            = 0; '
-           'START SLAVE;')
-    mysql_exec(conn, sql, (primary, config.repl_user, config.repl_password,))
+           'MASTER_SSL            = 0; ')
+    params = (primary, config.repl_user, config.repl_password)
+    log.debug(sql)
+    log.debug(params)
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        cursor.execute('START SLAVE;')
+        conn.commit()
+    except:
+        raise
+    finally:
+        cursor.close()
 
 @debug
 def get_primary_host(primary=None, timeout=30):
@@ -1083,19 +1128,29 @@ def get_from_consul(key):
 
 # all exceptions bubble up to the caller
 def mysql_exec(conn, sql, params):
-    with conn.cursor() as cursor:
+    try:
+        cursor = conn.cursor()
         log.debug(sql)
         log.debug(params)
         cursor.execute(sql, params)
         conn.commit()
+    except:
+        raise
+    finally:
+        cursor.close()
 
 # all exceptions bubble up to the caller
 def mysql_query(conn, sql, params):
-    with conn.cursor() as cursor:
+    try:
+        cursor = conn.cursor()
         log.debug(sql)
         log.debug(params)
         cursor.execute(sql, params)
         return cursor.fetchall()
+    except:
+        raise
+    finally:
+        cursor.close()
 
 def get_ip(iface='eth0'):
     """
