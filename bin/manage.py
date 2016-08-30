@@ -999,11 +999,8 @@ def write_snapshot(conn):
     # create_snapshot call and return. The snapshot process will be
     # re-parented to ContainerPilot
     set_backup_ttl()
-    # TODO: we currently fork this off and return because otherwise
-    # health checks will fail during backups. When periodic tasks
-    # support lands in ContainerPilot we should move the snapshot
-    # to a task and avoid this mess.
-    subprocess.Popen(['python', '/usr/local/bin/manage.py', 'create_snapshot'])
+    create_snapshot()
+
 
 @debug
 def set_backup_ttl():
