@@ -112,10 +112,6 @@ PRIMARY = 'mysql-primary'
 STANDBY = 'mysql-standby'
 REPLICA = 'mysql'
 
-# determines whether we use the primary for snapshots or a separate standby
-# replica that doesn't take part in serving queries.
-USE_STANDBY = get_environ('USE_STANDBY', False)
-
 # consts for keys
 PRIMARY_KEY = get_environ('PRIMARY_KEY', 'mysql-primary')
 STANDBY_KEY = get_environ('STANDBY_KEY', 'mysql-standby')
@@ -150,14 +146,14 @@ class MySQLNode(object):
         restarts and so we can easily invalidate it. Returns:
         - One of (PRIMARY, REPLICA, STANDBY) if the value has been set already.
         - None if the primary has not been elected.
-        - None if the standby is in use and one has not been elected.
+        - None if the standby has not been elected.
         - Defaults to REPLICA.
         """
         if not self.state:
             self.primary = get_primary_node()
             if self.hostname == self.primary:
                 self.state = PRIMARY
-            elif USE_STANDBY:
+            else:
                 self.standby = get_standby_node()
                 if self.hostname == self.standby:
                     self.state = STANDBY
@@ -176,10 +172,7 @@ class MySQLNode(object):
         return self.state != PRIMARY and self.state != STANDBY
 
     def is_snapshot_node(self):
-        if USE_STANDBY:
-             return self.state == STANDBY
-        else:
-            return self.state == PRIMARY
+        return self.state == STANDBY
 
 # ---------------------------------------------------------
 
@@ -280,10 +273,16 @@ class Manta(object):
 class ContainerPilot(object):
     """
     ContainerPilot config is where we rewrite ContainerPilot's own config
-    so that we can dynamically alter what service we advertise
+    so that we can dynamically alter what service we advertise.
     """
 
     def __init__(self, node):
+        """
+        Parses the ContainerPilot config file and interpolates the
+        environment into it the same way that ContainerPilot does.
+        The `state` attribute will always be populated with the
+        the current state derived from Consul.
+        """
         self.node = node
         self.path = get_environ('CONTAINERPILOT', None).replace('file://', '')
         with open(self.path, 'r') as f:
@@ -306,11 +305,15 @@ class ContainerPilot(object):
         else:
             self.config['coprocesses'] = []
 
+        self.state = self.node.get_state()
+        if self.state != STANDBY:
+            # don't run snapshot task for non-standby instances
+            self.config['tasks'] = []
+
     @debug(name='ContainerPilot.update')
     def update(self):
-        state = self.node.get_state()
-        if state and self.config['services'][0]['name'] != state:
-            self.config['services'][0]['name'] = state
+        if self.state and self.config['services'][0]['name'] != self.state:
+            self.config['services'][0]['name'] = self.state
             self.render()
             return True
 
@@ -398,7 +401,6 @@ def on_change():
     try:
         node = MySQLNode()
         cp = ContainerPilot(node)
-        cp.update() # this will populate MySQLNode state correctly
         if node.is_primary():
             return
 
@@ -468,7 +470,6 @@ def snapshot_task():
     """
     node = MySQLNode()
     cp = ContainerPilot(node)
-    cp.update() # this will populate MySQLNode state correctly
 
     if not node.is_snapshot_node() or is_backup_running():
         # bail-out early if we can avoid making a DB connection
@@ -573,7 +574,7 @@ def assert_initialized_for_state(node):
         if not node.primary:
             # primary hasn't yet been set in Consul
             state = PRIMARY
-        elif USE_STANDBY and not node.standby:
+        elif not node.standby:
             # standby hasn't yet been set in Consul
             state = STANDBY
         else:
@@ -586,6 +587,7 @@ def assert_initialized_for_state(node):
         runner(node)
         return False
     except OSError:
+        # the lock file exists so we've already initialized for this state
         return True
 
 
@@ -617,10 +619,9 @@ def run_as_primary(node):
         node.conn = wait_for_connection(**ctx)
         stop_replication(node.conn) # in case this is a newly-promoted primary
 
-    if USE_STANDBY:
-        # if we're using a standby instance then we need to first
-        # snapshot the primary so that we can bootstrap the standby.
-        write_snapshot(node.conn)
+    # although backups will be run from the standby, we need to first
+    # snapshot the primary so that we can bootstrap the standby.
+    write_snapshot(node.conn)
 
 @debug
 def run_as_standby(node):
@@ -838,7 +839,7 @@ def set_timezone_info():
 
     pipeline = ('/usr/bin/mysql_tzinfo_to_sql /usr/share/zoneinfo | '
                 '/usr/bin/mysql -uroot --protocol=socket '
-                '--socket=/var/lib/mysql/mysql.sock')
+                '--socket=/var/run/mysqld/mysql.sock')
     try:
         subprocess.check_output(pipeline)
     except (subprocess.CalledProcessError, OSError):
