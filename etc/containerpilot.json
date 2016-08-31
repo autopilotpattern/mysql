@@ -30,6 +30,7 @@
   ],
   "coprocesses": [{{ if .CONSUL_AGENT }}
     {
+      "name": "consul-agent (host:{{ .CONSUL }})",
       "command": ["/usr/local/bin/consul", "agent",
                   "-data-dir=/data",
                   "-config-dir=/config",

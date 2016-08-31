@@ -20,7 +20,7 @@ import mysql.connector as mysqlconn
 import consul as pyconsul
 import manta
 
-logging.basicConfig(format='%(asctime)s %(levelname)s %(name)s %(message)s',
+logging.basicConfig(format='%(levelname)s %(name)s %(message)s',
                     stream=sys.stdout,
                     level=logging.getLevelName(
                         os.environ.get('LOG_LEVEL', 'INFO')))
