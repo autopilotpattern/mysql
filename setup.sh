@@ -166,6 +166,15 @@ test() {
            python test.py
 }
 
+get_root_password() {
+    echo $(docker logs mysql_mysql_1 2>&1 | \
+               awk '/Generated root password/{print $NF}' | \
+               awk '{$1=$1};1'
+        ) | pbcopy
+}
+
+
+
 # ---------------------------------------------------
 # parse arguments
 
