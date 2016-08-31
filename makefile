@@ -124,7 +124,7 @@ test-local-docker:
 unit-test:
 	docker run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
-		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
+		-v $(shell pwd)/bin/manage:/usr/local/bin/manage \
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
 		autopilotpattern/mysql:$(TAG) \
 		python test.py
@@ -134,6 +134,23 @@ shell:
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-e COMPOSE_FILE=local-compose.yml \
 		$(LOCALRUN) /bin/bash #$(PYTHON)
+
+
+failover: build tag
+	docker-compose -f local-compose.yml stop
+	docker-compose -f local-compose.yml rm -f
+	LOG_LEVEL=DEBUG docker-compose -f local-compose.yml up -d
+	sleep 180
+	LOG_LEVEL=DEBUG docker-compose -f local-compose.yml scale mysql=3
+	sleep 60
+	docker stop mysql_mysql_1
+	sleep 60
+	docker logs mysql_mysql_1 > mysql1.log 2>&1
+	docker logs mysql_mysql_2 > mysql2.log 2>&1
+	docker logs mysql_mysql_3 > mysql3.log 2>&1
+	cp mysql2.log mysql2.full.log
+	cp mysql3.log mysql3.full.log
+	open http://localhost:8500
 
 # -------------------------------------------------------
 

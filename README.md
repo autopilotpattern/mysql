@@ -48,10 +48,6 @@ With the automatic failover described above, manually promoting a replica to a p
 - The `onChange` handlers on the other replicas will automatically detect the change in what node is the primary, and will execute `CHANGE MASTER` to change their replication source to the new primary.
 - At any point after this, we use `docker exec` to run `STOP SLAVE` on the new primary and can tear down the old primary if it still exists.
 
-### Optional standby
-
-By default, the primary performs the backup snapshots. For deployments with high transactional volumes it might make sense to use a standby instance to perform snapshots so as not to use resources on the primary during the snapshot. Passing the flag `USE_STANDBY=yes` to the containers at startup will cause one instance to be reserved for this use and not serve queries.
-
 ---
 
 ## Running the cluster
@@ -81,7 +77,6 @@ These variables are optional but you most likely want them:
 - `MYSQL_DATABASE`: create this database on startup if it doesn't already exist. The `MYSQL_USER` user will be granted superuser access to that DB.
 - `LOG_LEVEL`: will set the logging level of the `triton-mysql.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels). In production you'll want this to be at `INFO` or above.
 - `CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
-- `USE_STANDBY` tells the `triton-mysql.py` application to use a separate standby MySQL node to run backups. This might be useful if you have a very high write throughput on the primary node. Defaults to `no` (turn on with `yes` or `on`).
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
 
@@ -92,7 +87,6 @@ The following variables control the names of keys written to Consul. They are op
 - `LAST_BINLOG_KEY`: The key used to store the filename of the most recent binlog file on the primary. (Defaults to `mysql-last-binlog`.)
 - `BACKUP_NAME`: The name of the backup file that's stored on Manta, with optional [strftime](https://docs.python.org/2/library/time.html#time.strftime) directives. (Defaults to `mysql-backup-%Y-%m-%dT%H-%M-%SZ`.)
 - `BACKUP_TTL`: Time in seconds to wait between backups. (Defaults to `86400`, or 24 hours.)
-- `SESSION_CACHE_FILE`: The path to the on-disk cache of the Consul session ID for each node. (Defaults to `/tmp/mysql-session`.)
 - `SESSION_NAME`: The name used for session locks. (Defaults to `mysql-primary-lock`.)
 
 These variables *may* be passed but it's not recommended to do this. Instead we'll set a one-time root password during DB initialization; the password will be dropped into the logs. Security can be improved by using a key management system in place of environment variables. The constructor for the `MySQLNode` class would be a good place to hook in this behavior, which is out-of-scope for this demonstration.
