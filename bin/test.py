@@ -1,7 +1,12 @@
 import json
+from Queue import Queue as Queue
+from Queue import Empty, Full
 import os
 import socket
+import sys
 import tempfile
+import threading
+import time
 import unittest
 
 import mock
@@ -11,6 +16,116 @@ from manage.libconsul import Consul
 from manage.libmanta import Manta
 from manage.libmysql import MySQL
 from manage.utils import *
+
+
+thread_data = threading.local()
+
+def trace_exceptions(frame, event, arg):
+    if event != 'exception':
+        return
+    co = frame.f_code
+    func_name = co.co_name
+    line_no = frame.f_lineno
+    exc_type, exc_value, exc_traceback = arg
+    # print 'Tracing exception: %s "%s" on line %s of %s' % \
+    #   (exc_type.__name__, exc_value, line_no, func_name)
+
+def trace_wait(frame, event, arg):
+    if event != 'call':
+        return
+    func_name = frame.f_code.co_name
+    if func_name in thread_data.trace_into:
+        node_name = threading.current_thread().name
+        # print('{} is waiting for {}'.format(node_name, func_name))
+        try:
+            # block until new work is available but no more than 5
+            # seconds before killing the thread
+            val = thread_data.queue.get(True, 5)
+            thread_data.queue.task_done()
+        except Empty:
+            sys.exit(0)
+        # print('{} finished waiting for {}: {}'.format(node_name, func_name, val))
+        return trace_exceptions
+
+
+def run_trace(fn, *args, **kwargs):
+    try:
+        thread_data.queue = kwargs.pop('queue')
+        thread_data.trace_into = kwargs.pop('trace_into', None)
+        sys.settrace(trace_wait)
+        fn(*args, **kwargs)
+    except Exception as ex:
+        print(ex)
+
+
+def example(arg):
+
+    print('example: {}'.format(arg))
+
+    def example_one(arg):
+        print('example_one: {}'.format(arg))
+
+    def example_two(arg):
+        print('example_two: {}'.format(arg))
+
+    def example_three(arg):
+        print('example_three: {}'.format(arg))
+
+    example_one(arg)
+    example_two(arg)
+    example_three(arg)
+
+    print('exiting example: {}'.format(arg))
+
+class TestPreStart(unittest.TestCase):
+
+    def setUp(self):
+        self.node1 = manage.Node()
+        self.node1.name = 'node1'
+        self.node2 = manage.Node()
+        self.node2.name = 'node2'
+        self.node1q = Queue(1)
+        self.node2q = Queue(1)
+
+    def test_ordering(self):
+
+        trace_into = ['example', 'example_one', 'example_two', 'example_three']
+        node1 = threading.Thread(target=run_trace,
+                                 name='node1',
+                                 args=(example, 'node1'),
+                                 kwargs=dict(queue=self.node1q,
+                                             trace_into=trace_into))
+        node2 = threading.Thread(target=run_trace,
+                                 name='node2',
+                                 args=(example, 'node2'),
+                                 kwargs=dict(queue=self.node2q,
+                                             trace_into=trace_into))
+        print('starting!')
+        node1.start()
+        node2.start()
+
+        try:
+            while True:
+                # tick thru the functions
+                print('tick!')
+                self.node1q.put(1, True, 1)
+                print('tick!')
+                self.node2q.put(2, True, 1)
+                time.sleep(1)
+        except Full:
+            pass
+        print('waiting!')
+        node1.join()
+        node2.join()
+
+
+    # def test_pre_start_ordering(self):
+    #     """
+    #     We can't easily interleave the steps of two different nodes
+    #     pre_start in a predictable way
+    #     """
+    #     manage.pre_start(self.node1)
+    #     manage.pre_start(self.node2)
 
 
 class TestMySQL(unittest.TestCase):
