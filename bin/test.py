@@ -9,7 +9,10 @@ import threading
 import time
 import unittest
 
+# pylint: disable=import-error
+import consul as pyconsul
 import mock
+
 import manage
 from manage.containerpilot import ContainerPilot
 from manage.libconsul import Consul
@@ -20,129 +23,153 @@ from manage.utils import *
 
 thread_data = threading.local()
 
-def trace_exceptions(frame, event, arg):
-    if event != 'exception':
-        return
-    co = frame.f_code
-    func_name = co.co_name
-    line_no = frame.f_lineno
-    exc_type, exc_value, exc_traceback = arg
-    # print 'Tracing exception: %s "%s" on line %s of %s' % \
-    #   (exc_type.__name__, exc_value, line_no, func_name)
-
 def trace_wait(frame, event, arg):
     if event != 'call':
         return
     func_name = frame.f_code.co_name
-    if func_name in thread_data.trace_into:
+    if func_name in thread_data.trace_into or func_name == '_mock_call':
         node_name = threading.current_thread().name
-        # print('{} is waiting for {}'.format(node_name, func_name))
+        timeout = thread_data.timeout
         try:
             # block until new work is available but no more than 5
             # seconds before killing the thread
-            val = thread_data.queue.get(True, 5)
+            val = thread_data.queue.get(True, timeout)
+            if val == 'quit':
+                raise Empty
             thread_data.queue.task_done()
         except Empty:
             sys.exit(0)
-        # print('{} finished waiting for {}: {}'.format(node_name, func_name, val))
-        return trace_exceptions
 
 
-def run_trace(fn, *args, **kwargs):
-    try:
+class TestNode(object):
+    """
+    TestNode is a context containing a manage.Node object and which runs
+    the function under test in its own thread. The function under test
+    is stepped thru with each `tick()` call on this object.
+    """
+    def __init__(self, node=None, fn=None, trace_into=[]):
+        self.node = node
+        self._nodeq = Queue(1)
+        self._thread = threading.Thread(
+            target=self.step_thru,
+            name=node.name,
+            args=(fn, node),
+            kwargs=dict(queue=self._nodeq, trace_into=trace_into))
+        self._thread.start()
+
+    def step_thru(self, fn, *args, **kwargs):
+        """
+        Step thru the function `fn`. The function will block every time it
+        calls a function w/ a name listed in `trace_into` until a message
+        is pushed onto the `queue` or a number of seconds equal to
+        `test_timeout` passes. Exceptions are allowed to bubble up and
+        crash the thread.
+        """
         thread_data.queue = kwargs.pop('queue')
         thread_data.trace_into = kwargs.pop('trace_into', None)
+        thread_data.timeout = kwargs.pop('test_timeout', 5)
         sys.settrace(trace_wait)
         fn(*args, **kwargs)
-    except Exception as ex:
-        print(ex)
 
+    def tick(self, val=True):
+        print('tick!: {}'.format(val))
+        try:
+            self._nodeq.put(val, True, 1)
+        except Full:
+            raise Full('{} raised Full at {}'.format(self.node.name, val))
+        time.sleep(0.01) # ensure we yield the main thread
 
-def example(arg):
+    def end(self):
+        try:
+            self._nodeq.put('quit', True, 1)
+        except Full:
+            pass
+        finally:
+            self._thread.join()
 
-    print('example: {}'.format(arg))
-
-    def example_one(arg):
-        print('example_one: {}'.format(arg))
-
-    def example_two(arg):
-        print('example_two: {}'.format(arg))
-
-    def example_three(arg):
-        print('example_three: {}'.format(arg))
-
-    example_one(arg)
-    example_two(arg)
-    example_three(arg)
-
-    print('exiting example: {}'.format(arg))
 
 class TestPreStart(unittest.TestCase):
 
     def setUp(self):
-        self.node1 = manage.Node()
-        self.node1.name = 'node1'
-        self.node2 = manage.Node()
-        self.node2.name = 'node2'
-        self.node1q = Queue(1)
-        self.node2q = Queue(1)
+        logging.getLogger('manage').setLevel(logging.WARN)
+        consul = mock.MagicMock()
+        manta = mock.MagicMock()
+        my = mock.MagicMock()
+        my.datadir = tempfile.mkdtemp()
+        _node1 = manage.Node(consul=consul, manta=manta, mysql=my)
+        trace_into=['render', 'has_snapshot', 'get_backup',
+                    'restore_from_snapshot', 'initialize_db', 'get']
+        self.node_1 = TestNode(node=_node1, fn=manage.pre_start,
+                               trace_into=trace_into)
 
-    def test_ordering(self):
+    def tearDown(self):
+        logging.getLogger('manage').setLevel(logging.DEBUG)
+        self.node_1.end()
 
-        trace_into = ['example', 'example_one', 'example_two', 'example_three']
-        node1 = threading.Thread(target=run_trace,
-                                 name='node1',
-                                 args=(example, 'node1'),
-                                 kwargs=dict(queue=self.node1q,
-                                             trace_into=trace_into))
-        node2 = threading.Thread(target=run_trace,
-                                 name='node2',
-                                 args=(example, 'node2'),
-                                 kwargs=dict(queue=self.node2q,
-                                             trace_into=trace_into))
-        print('starting!')
-        node1.start()
-        node2.start()
+    def test_pre_start_first_node(self):
+        """
+        The first node will not attempt to download a snapshot from Manta.
+        """
+        self.node_1.node.consul.has_snapshot.return_value = False
+        manage.pre_start(self.node_1.node)
+        self.node_1.node.consul.has_snapshot.assert_called_once()
+        self.node_1.node.mysql.initialize_db.assert_called_once()
+        self.assertFalse(self.node_1.node.manta.get_backup.called)
+        self.assertFalse(self.node_1.node.mysql.restore_from_snapshot.called)
 
-        try:
-            while True:
-                # tick thru the functions
-                print('tick!')
-                self.node1q.put(1, True, 1)
-                print('tick!')
-                self.node2q.put(2, True, 1)
-                time.sleep(1)
-        except Full:
-            pass
-        print('waiting!')
-        node1.join()
-        node2.join()
+    def test_pre_start_snapshot_complete(self):
+        """
+        Given a successful snapshot by the first node, a new node will
+        download the snapshot from Manta
+        """
+        self.node_1.node.consul.has_snapshot.return_value = True
+        manage.pre_start(self.node_1.node)
+        self.node_1.node.consul.has_snapshot.assert_called_once()
+        self.node_1.node.manta.get_backup.assert_called_once()
+        self.node_1.node.mysql.restore_from_snapshot.assert_called_once()
+        self.assertFalse(self.node_1.node.mysql.initialize_db.called)
 
+    def test_pre_start_no_reinitialization(self):
+        """
+        Given a node that's restarted, pre_start should not try
+        to re-initialize the node.
+        """
+        os.mkdir(os.path.join(self.node_1.node.mysql.datadir, 'mysql'))
+        self.node_1.node.consul.has_snapshot.return_value = True
+        manage.pre_start(self.node_1.node)
+        self.assertFalse(self.node_1.node.consul.has_snapshot.called)
 
-    # def test_pre_start_ordering(self):
-    #     """
-    #     We can't easily interleave the steps of two different nodes
-    #     pre_start in a predictable way
-    #     """
-    #     manage.pre_start(self.node1)
-    #     manage.pre_start(self.node2)
+    def test_pre_start_snapshot_incomplete(self):
+        """
+        Given a snapshot that has been marked successful but not
+        completed, a new node will wait and not crash.
+        """
+        self.node_1.node.consul = Consul(TEST_ENVIRON)
+        self.node_1.node.consul.client = mock.MagicMock()
+        self.node_1.node.consul.client.kv.get.side_effect = pyconsul.ConsulException('')
+
+        self.node_1.tick('pre_start')
+        self.node_1.tick('render')
+        self.node_1.tick('has_snapshot')
+        self.node_1.tick('get')
+        self.node_1.tick('get')
+        self.node_1.node.consul.client.kv.get.side_effect = None
+        self.node_1.node.consul.client.kv.get.return_value = [0,{'Value': 'ok'}]
+        self.node_1.tick('get_backup')
+        self.node_1.tick('restore_from_snapshot')
+        self.node_1.end()
+
+        self.node_1.node.manta.get_backup.assert_called_once()
+        self.assertEqual(self.node_1.node.consul.client.kv.get.call_count, 2)
+        self.node_1.node.mysql.restore_from_snapshot.assert_called_once()
+        self.assertFalse(self.node_1.node.mysql.initialize_db.called)
 
 
 class TestMySQL(unittest.TestCase):
 
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
-        self.environ = {
-            'MYSQL_DATABASE': 'test_mydb',
-            'MYSQL_USER': 'test_me',
-            'MYSQL_PASSWORD': 'test_pass',
-            'MYSQL_ROOT_PASSWORD': 'test_root_pass',
-            'MYSQL_RANDOM_ROOT_PASSWORD': 'Y',
-            'MYSQL_ONETIME_PASSWORD': '1',
-            'MYSQL_REPL_USER': 'test_repl_user',
-            'MYSQL_REPL_PASSWORD': 'test_repl_pass',
-            'INNODB_BUFFER_POOL_SIZE': '100'
-        }
+        self.environ = TEST_ENVIRON.copy()
         self.my = MySQL(self.environ)
         self.my._conn = mock.MagicMock()
 
@@ -234,10 +261,7 @@ class TestMySQL(unittest.TestCase):
 class TestConsul(unittest.TestCase):
 
     def setUp(self):
-        self.environ = {
-            'CONSUL': 'my.consul.example.com',
-            'CONSUL_AGENT': '1',
-        }
+        self.environ = TEST_ENVIRON.copy()
 
     def test_parse_with_consul_agent(self):
         self.environ['CONSUL_AGENT'] = '1'
@@ -254,15 +278,12 @@ class TestConsul(unittest.TestCase):
         self.assertEqual(consul.host, 'my.consul.example.com')
 
 
+
 class TestContainerPilotConfig(unittest.TestCase):
 
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
-        self.environ = {
-            'CONSUL': 'my.consul.example.com',
-            'CONSUL_AGENT': '1',
-            'CONTAINERPILOT': 'file:///etc/containerpilot.json'
-        }
+        self.environ = TEST_ENVIRON.copy()
 
     def tearDown(self):
         logging.getLogger('manage').setLevel(logging.DEBUG)
@@ -318,19 +339,7 @@ class TestContainerPilotConfig(unittest.TestCase):
 class TestMantaConfig(unittest.TestCase):
 
     def setUp(self):
-        self.environ = {
-            'MANTA_USER': 'test_manta_account',
-            'MANTA_SUBUSER': 'test_manta_subuser',
-            'MANTA_ROLE': 'test_manta_role',
-            'MANTA_KEY_ID': '49:d5:1f:09:5e:46:92:14:c0:46:8e:48:33:75:10:bc',
-            'MANTA_PRIVATE_KEY': (
-                '-----BEGIN RSA PRIVATE KEY-----#'
-                'MIIEowIBAAKCAQEAvvljJQt2V3jJoM1SC9FiaBaw5AjVR40v5wKCVaONSz+FWm#'
-                'pc91hUJHQClaxXDlf1p5kf3Oqu5qjM6w8oD7uPkzj++qPnCkzt+JGPfUBxpzul#'
-                '80J0GLHpqQ2YUBXfJ6pCb0g7z/hkdsSwJt7DS+keWCtWpVYswj2Ln8CwNlZlye#'
-                'qAmNE2ePZg8AzfpFmDROljU3GHhKaAviiLyxOklbwSbySbTmdNLHHxu22+ciW9#'
-                '-----END RSA PRIVATE KEY-----')
-        }
+        self.environ = TEST_ENVIRON.copy()
 
     def test_parse(self):
         manta = Manta(self.environ)
@@ -377,6 +386,36 @@ class TestUtilsEnvironment(unittest.TestCase):
         self.assertEqual(env('B', '', environ), 'PASS')
         self.assertEqual(env('C', '', environ), 'PASS')
         self.assertEqual(env('D', 'PASS', environ), 'PASS')
+
+
+TEST_ENVIRON = {
+    'CONSUL': 'my.consul.example.com',
+    'CONSUL_AGENT': '1',
+
+    'CONTAINERPILOT': 'file:///etc/containerpilot.json',
+
+    'MYSQL_DATABASE': 'test_mydb',
+    'MYSQL_USER': 'test_me',
+    'MYSQL_PASSWORD': 'test_pass',
+    'MYSQL_ROOT_PASSWORD': 'test_root_pass',
+    'MYSQL_RANDOM_ROOT_PASSWORD': 'Y',
+    'MYSQL_ONETIME_PASSWORD': '1',
+    'MYSQL_REPL_USER': 'test_repl_user',
+    'MYSQL_REPL_PASSWORD': 'test_repl_pass',
+    'INNODB_BUFFER_POOL_SIZE': '100',
+
+    'MANTA_USER': 'test_manta_account',
+    'MANTA_SUBUSER': 'test_manta_subuser',
+    'MANTA_ROLE': 'test_manta_role',
+    'MANTA_KEY_ID': '49:d5:1f:09:5e:46:92:14:c0:46:8e:48:33:75:10:bc',
+    'MANTA_PRIVATE_KEY': (
+        '-----BEGIN RSA PRIVATE KEY-----#'
+        'MIIEowIBAAKCAQEAvvljJQt2V3jJoM1SC9FiaBaw5AjVR40v5wKCVaONSz+FWm#'
+        'pc91hUJHQClaxXDlf1p5kf3Oqu5qjM6w8oD7uPkzj++qPnCkzt+JGPfUBxpzul#'
+        '80J0GLHpqQ2YUBXfJ6pCb0g7z/hkdsSwJt7DS+keWCtWpVYswj2Ln8CwNlZlye#'
+        'qAmNE2ePZg8AzfpFmDROljU3GHhKaAviiLyxOklbwSbySbTmdNLHHxu22+ciW9#'
+        '-----END RSA PRIVATE KEY-----')
+}
 
 
 
