@@ -96,80 +96,83 @@ class TestPreStart(unittest.TestCase):
         manta = mock.MagicMock()
         my = mock.MagicMock()
         my.datadir = tempfile.mkdtemp()
-        _node1 = manage.Node(consul=consul, manta=manta, mysql=my)
-        trace_into=['render', 'has_snapshot', 'get_backup',
-                    'restore_from_snapshot', 'initialize_db', 'get']
-        self.node_1 = TestNode(node=_node1, fn=manage.pre_start,
-                               trace_into=trace_into)
+        self.node = manage.Node(consul=consul, manta=manta, mysql=my)
 
     def tearDown(self):
         logging.getLogger('manage').setLevel(logging.DEBUG)
-        self.node_1.end()
 
     def test_pre_start_first_node(self):
         """
         The first node will not attempt to download a snapshot from Manta.
         """
-        self.node_1.node.consul.has_snapshot.return_value = False
-        manage.pre_start(self.node_1.node)
-        self.node_1.node.consul.has_snapshot.assert_called_once()
-        self.node_1.node.mysql.initialize_db.assert_called_once()
-        self.assertFalse(self.node_1.node.manta.get_backup.called)
-        self.assertFalse(self.node_1.node.mysql.restore_from_snapshot.called)
+        self.node.consul.has_snapshot.return_value = False
+        manage.pre_start(self.node)
+        self.node.consul.has_snapshot.assert_called_once()
+        self.node.mysql.initialize_db.assert_called_once()
+        self.assertFalse(self.node.manta.get_backup.called)
+        self.assertFalse(self.node.mysql.restore_from_snapshot.called)
 
     def test_pre_start_snapshot_complete(self):
         """
         Given a successful snapshot by the first node, a new node will
         download the snapshot from Manta
         """
-        self.node_1.node.consul.has_snapshot.return_value = True
-        manage.pre_start(self.node_1.node)
-        self.node_1.node.consul.has_snapshot.assert_called_once()
-        self.node_1.node.manta.get_backup.assert_called_once()
-        self.node_1.node.mysql.restore_from_snapshot.assert_called_once()
-        self.assertFalse(self.node_1.node.mysql.initialize_db.called)
+        self.node.consul.has_snapshot.return_value = True
+        manage.pre_start(self.node)
+        self.node.consul.has_snapshot.assert_called_once()
+        self.node.manta.get_backup.assert_called_once()
+        self.node.mysql.restore_from_snapshot.assert_called_once()
+        self.assertFalse(self.node.mysql.initialize_db.called)
 
     def test_pre_start_no_reinitialization(self):
         """
         Given a node that's restarted, pre_start should not try
         to re-initialize the node.
         """
-        os.mkdir(os.path.join(self.node_1.node.mysql.datadir, 'mysql'))
-        self.node_1.node.consul.has_snapshot.return_value = True
-        manage.pre_start(self.node_1.node)
-        self.assertFalse(self.node_1.node.consul.has_snapshot.called)
+        os.mkdir(os.path.join(self.node.mysql.datadir, 'mysql'))
+        self.node.consul.has_snapshot.return_value = True
+        manage.pre_start(self.node)
+        self.assertFalse(self.node.consul.has_snapshot.called)
 
     def test_pre_start_snapshot_incomplete(self):
         """
         Given a snapshot that has been marked successful but not
         completed, a new node will wait and not crash.
         """
-        self.node_1.node.consul = Consul(TEST_ENVIRON)
-        self.node_1.node.consul.client = mock.MagicMock()
-        self.node_1.node.consul.client.kv.get.side_effect = pyconsul.ConsulException('')
+        trace_into=['render', 'has_snapshot', 'get_backup',
+                    'restore_from_snapshot', 'initialize_db', 'get']
 
-        self.node_1.tick('pre_start')
-        self.node_1.tick('render')
-        self.node_1.tick('has_snapshot')
-        self.node_1.tick('get')
-        self.node_1.tick('get')
-        self.node_1.node.consul.client.kv.get.side_effect = None
-        self.node_1.node.consul.client.kv.get.return_value = [0,{'Value': 'ok'}]
-        self.node_1.tick('get_backup')
-        self.node_1.tick('restore_from_snapshot')
-        self.node_1.end()
+        self.node.consul = Consul(TEST_ENVIRON)
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.client.kv.get.side_effect = pyconsul.ConsulException('')
 
-        self.node_1.node.manta.get_backup.assert_called_once()
-        self.assertEqual(self.node_1.node.consul.client.kv.get.call_count, 2)
-        self.node_1.node.mysql.restore_from_snapshot.assert_called_once()
-        self.assertFalse(self.node_1.node.mysql.initialize_db.called)
+        node = TestNode(node=self.node, fn=manage.pre_start,
+                        trace_into=trace_into)
+
+        node.tick('pre_start')
+        node.tick('render')
+        node.tick('has_snapshot')
+        node.tick('get')
+        node.tick('get')
+        self.node.consul.client.kv.get.side_effect = None
+        self.node.consul.client.kv.get.return_value = [0,{'Value': 'ok'}]
+        node.tick('get_backup')
+        node.tick('restore_from_snapshot')
+        node.end()
+
+        self.node.manta.get_backup.assert_called_once()
+        self.assertEqual(self.node.consul.client.kv.get.call_count, 2)
+        self.node.mysql.restore_from_snapshot.assert_called_once()
+        self.assertFalse(self.node.mysql.initialize_db.called)
 
 
 class TestHealth(unittest.TestCase):
     pass
 
+
 class TestOnChange(unittest.TestCase):
     pass
+
 
 class TestSnapshotTask(unittest.TestCase):
 
