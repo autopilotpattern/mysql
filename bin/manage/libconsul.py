@@ -1,10 +1,9 @@
 """ Module for Consul client wrapper and related tooling. """
 import os
-import sys
 import time
 
-from manage.utils import debug, env, log, to_flag, \
-    WaitTimeoutError, UnknownPrimary, PRIMARY, PRIMARY_KEY, LAST_BACKUP_KEY
+from manage.utils import debug, env, to_flag, \
+    WaitTimeoutError, UnknownPrimary, PRIMARY_KEY, LAST_BACKUP_KEY
 
 # pylint: disable=import-error,invalid-name,dangerous-default-value
 import consul as pyconsul
@@ -163,68 +162,21 @@ class Consul(object):
         while timeout > 0:
             try:
                 nodes = self.client.health.service(PRIMARY_KEY, passing=True)[1]
-                instance = [service['Service'] for service in nodes]
-                if len(instance) > 1:
-                    raise UnknownPrimary('Multiple primaries detected! %s', instance)
-                return instance['ID'], instance['Address']
+                instances = [service['Service'] for service in nodes]
+                if len(instances) > 1:
+                    raise UnknownPrimary('Multiple primaries detected! %s', instances)
+                return instances[0]['ID'], instances[0]['Address']
             except pyconsul.ConsulException:
                 timeout = timeout - 1
                 time.sleep(1)
-            except:
-                raise UnknownPrimary('No primary found.')
+            except (IndexError, KeyError):
+                raise UnknownPrimary('No primary found')
         raise WaitTimeoutError('Could not find primary before timeout.')
 
-
-# ---------------------------------------------------------
-# functions to support initialization
-
-@debug
-def mark_as_primary(node):
-    """ Write flag to Consul to mark this node as primary """
-    session_id = node.consul.get_session()
-    if not node.consul.lock(PRIMARY_KEY, node.hostname, session_id):
-        log.error('Tried to mark node primary but primary exists, '
-                  'exiting for retry on next check.')
-        sys.exit(1)
-    node.state = PRIMARY
-
-
-
-
-@debug
-def get_primary_host(consul, primary=None, timeout=30):
-    """
-    Query Consul for healthy mysql nodes and check their ServiceID vs
-    the primary node. Returns the IP address of the matching node or
-    raises an exception.
-    """
-    if not primary:
-        primary = get_primary_node(consul)
-    if not primary:
-        raise UnknownPrimary('Tried replication setup but could not find primary.')
-    log.debug('checking if primary (%s) is healthy...', primary)
-
-    while timeout > 0:
-        try:
-            nodes = consul.health.service(PRIMARY_KEY, passing=True)[1]
-            ips = [service['Service']['Address'] for service in nodes
-                   if service['Service']['ID'].endswith(primary)]
-            return ips[0]
-        except pyconsul.ConsulException:
-            timeout = timeout - 1
-            time.sleep(1)
-
-    raise UnknownPrimary('Tried replication setup, but primary is '
-                         'set and not healthy.')
-
-@debug
-def get_primary_node(consul, timeout=10):
-    """ Get the node that has the lock for being the primary in Consul """
-    while timeout > 0:
-        try:
-            _, value = consul.read_lock(PRIMARY_KEY)
-            return value
-        except pyconsul.ConsulException as ex:
-            timeout = timeout - 1
-            time.sleep(1)
-    raise WaitTimeoutError(ex)
+    @debug
+    def mark_as_primary(self, name):
+        """ Write flag to Consul to mark this node as primary """
+        session_id = self.get_session()
+        if not self.lock(PRIMARY_KEY, name, session_id):
+            return False
+        return session_id

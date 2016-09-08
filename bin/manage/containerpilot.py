@@ -48,10 +48,6 @@ class ContainerPilot(object):
             config['consul'] = consul
             config['coprocesses'] = []
 
-        if config['services'][0]['name'].endswith('-primary'):
-            self.state = PRIMARY
-        else:
-            self.state = REPLICA
         self.config = config
 
     @debug(name='ContainerPilot.update', log_output=True)
@@ -60,6 +56,8 @@ class ContainerPilot(object):
         Update the on-disk config file if it is stale. Returns a
         bool indicating whether an update was made.
         """
+        if self.state == UNASSIGNED:
+            return False
         if self.state and self.config['services'][0]['name'] != self.state:
             self.config['services'][0]['name'] = self.state
             self._render()

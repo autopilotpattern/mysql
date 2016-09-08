@@ -167,11 +167,271 @@ class TestPreStart(unittest.TestCase):
 
 
 class TestHealth(unittest.TestCase):
-    pass
+
+    LOCK_PATH = '/var/run/init.lock'
+
+    def setUp(self):
+        logging.getLogger('manage').setLevel(logging.WARN)
+        consul = mock.MagicMock()
+        manta = mock.MagicMock()
+        my = mock.MagicMock()
+        cp = ContainerPilot()
+        cp.load(TEST_ENVIRON)
+        my.datadir = tempfile.mkdtemp()
+        self.node = manage.Node(
+            consul=consul, cp=cp, manta=manta, mysql=my,
+            ip='192.168.1.101', name='node1'
+        )
+
+    def tearDown(self):
+        logging.getLogger('manage').setLevel(logging.DEBUG)
+        try:
+            os.rmdir(self.LOCK_PATH)
+        except:
+            pass
+
+    def test_primary_first_pass(self):
+        """
+        Given uninitialized node w/ no other instances running,
+        set up for running as the primary.
+        """
+        self.node.mysql.wait_for_connection.return_value = True
+        self.node.mysql.get_primary.side_effect = UnknownPrimary()
+
+        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.mark_as_primary = mock.MagicMock(return_value=True)
+        self.node.consul.renew_session = mock.MagicMock()
+        manage.write_snapshot = mock.MagicMock(return_value=True)
+        self.node.consul.client.health.service.return_value = ()
+
+        manage.health(self.node)
+        calls = [
+            mock.call.setup_root_user(True),
+            mock.call.create_db(True),
+            mock.call.create_default_user(True),
+            mock.call.create_repl_user(True),
+            mock.call.expire_root_password(True)
+        ]
+        self.node.mysql.assert_has_calls(calls)
+        manage.write_snapshot.assert_called_once()
+        self.assertEqual(self.node.cp.state, PRIMARY)
+
+    def test_primary_typical(self):
+        """ Typical health check for primary with established replication """
+        os.mkdir(self.LOCK_PATH, 0700)
+        self.node.mysql.get_primary.return_value = ('node1', '192.168.1.101')
+        manage.health(self.node)
+        self.node.consul.renew_session.assert_called_once()
+        self.node.mysql.query.assert_called_once() # just the select 1
+        self.assertEqual(self.node.cp.state, PRIMARY)
+
+    def test_primary_no_replicas(self):
+        """ Health check if previously initialized but with no replicas """
+        os.mkdir(self.LOCK_PATH, 0700)
+        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(return_value=())
+
+        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.renew_session = mock.MagicMock()
+        self.node.consul.client.health.service.return_value = [0, [{
+            'Service' : {'ID': 'node1', 'Address': '192.168.1.101'},
+            }]]
+
+        manage.health(self.node)
+        calls = [
+            mock.call.query('show slave status'),
+            mock.call.query('show slave hosts'),
+            mock.call.query('select 1')
+        ]
+        self.node.mysql.query.assert_has_calls(calls)
+        self.node.consul.client.health.service.assert_called_once()
+        self.node.consul.renew_session.assert_called_once()
+        self.assertEqual(self.node.cp.state, PRIMARY)
+
+    def test_primary_no_replicas_no_consul_state_fails(self):
+        """
+        Health check if previously initialized but with no replicas
+        and no Consul state so we'll remain marked UNASSIGNED which
+        needs to be a failing health check.
+        """
+        os.mkdir(self.LOCK_PATH, 0700)
+        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(return_value=())
+
+        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.renew_session = mock.MagicMock()
+        self.node.consul.client.health.service.return_value = []
+        try:
+            manage.health(self.node)
+            self.fail('Should have exited but did not.')
+        except SystemExit:
+            pass
+        calls = [
+            mock.call.query('show slave status'),
+            mock.call.query('show slave hosts'),
+        ]
+        self.node.mysql.query.assert_has_calls(calls)
+        self.assertEqual(self.node.consul.client.health.service.call_count, 2)
+        self.assertEqual(self.node.cp.state, UNASSIGNED)
+
+    def test_replica_typical(self):
+        """
+        Typical health check for replica with established replication
+        """
+        os.mkdir(self.LOCK_PATH, 0700)
+        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(return_value=[
+            {'Master_Server_Id': 'node2', 'Master_Host': '192.168.1.102'}])
+
+        manage.health(self.node)
+        self.assertFalse(self.node.consul.renew_session.called)
+        calls = [
+            mock.call.query('show slave status'),
+            mock.call.query('show slave status')
+        ]
+        self.node.mysql.query.assert_has_calls(calls)
+        self.assertEqual(self.node.cp.state, REPLICA)
+
+    def test_replica_no_replication(self):
+        """
+        Health check for failure mode where initial replication setup
+        failed but a primary already exists in Consul.
+        """
+        os.mkdir(self.LOCK_PATH, 0700)
+        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(return_value=())
+        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.renew_session = mock.MagicMock()
+        self.node.consul.client.health.service.return_value = [0, [{
+            'Service' : {'ID': 'node2', 'Address': '192.168.1.102'},
+            }]]
+
+        try:
+            manage.health(self.node)
+            self.fail('Should have exited but did not.')
+        except SystemExit:
+            pass
+        calls = [
+            mock.call.query('show slave status'),
+            mock.call.query('show slave hosts'),
+            mock.call.query('show slave status')
+        ]
+        self.node.mysql.query.assert_has_calls(calls)
+        self.assertFalse(self.node.consul.renew_session.called)
+        self.assertEqual(self.node.cp.state, REPLICA)
+
+    def test_replica_first_pass(self):
+        """
+        Given uninitialized node w/ a health primary, set up replication.
+        """
+        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock()
+
+        def query_results(*args, **kwargs):
+            yield ()
+            yield () # and after two hits we've set up replication
+            yield [{'Master_Server_Id': 'node2', 'Master_Host': '192.168.1.102'}]
+
+        self.node.mysql.query.side_effect = query_results()
+        self.node.mysql.wait_for_connection = mock.MagicMock(return_value=True)
+        self.node.mysql.setup_replication = mock.MagicMock(return_value=True)
+
+        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.client.health.service.return_value = [0, [{
+            'Service' : {'ID': 'node2', 'Address': '192.168.1.102'},
+            }]]
+
+        manage.health(self.node)
+        calls = [
+            mock.call.query('show slave status'),
+            mock.call.query('show slave hosts'),
+            mock.call.query('show slave status')
+        ]
+        self.node.mysql.query.assert_has_calls(calls)
+        self.assertEqual(self.node.consul.client.health.service.call_count, 2)
+        manage.write_snapshot.assert_called_once()
+        self.assertEqual(self.node.cp.state, REPLICA)
+
+    def test_replica_first_pass_replication_setup_fails(self):
+        """
+        Given uninitialized node w/ failed replication setup, fail
+        """
+        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(return_value=())
+        self.node.mysql.wait_for_connection = mock.MagicMock(return_value=True)
+        self.node.mysql.setup_replication = mock.MagicMock(return_value=True)
+
+        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.client.health.service.return_value = [0, [{
+            'Service' : {'ID': 'node2', 'Address': '192.168.1.102'},
+            }]]
+        try:
+            manage.health(self.node)
+            self.fail('Should have exited but did not.')
+        except SystemExit:
+            pass
+        calls = [
+            mock.call.query('show slave status'),
+            mock.call.query('show slave hosts'),
+            mock.call.query('show slave status')
+        ]
+        self.node.mysql.query.assert_has_calls(calls)
+        self.assertEqual(self.node.consul.client.health.service.call_count, 2)
+        manage.write_snapshot.assert_called_once()
+        self.assertEqual(self.node.cp.state, REPLICA)
+
+    def test_replica_first_pass_primary_lockout(self):
+        """
+        Given uninitialized node w/ no primary, then a health primary
+        retry setting up as a replica
+        """
+        self.node.mysql.wait_for_connection.return_value = True
+        self.node.mysql.get_primary.side_effect = UnknownPrimary()
+
+        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.mark_as_primary = mock.MagicMock(return_value=False)
+        self.node.consul.client.health.service.return_value = ()
+        try:
+            manage.health(self.node)
+            self.fail('Should have exited but did not.')
+        except SystemExit:
+            pass
+
+        self.assertEqual(self.node.cp.state, UNASSIGNED)
+
 
 
 class TestOnChange(unittest.TestCase):
-    pass
+
+    def setUp(self):
+        # logging.getLogger('manage').setLevel(logging.WARN)
+        consul = mock.MagicMock()
+        manta = mock.MagicMock()
+        my = mock.MagicMock()
+        cp = ContainerPilot()
+        cp.state = PRIMARY
+        my.datadir = tempfile.mkdtemp()
+        self.node = manage.Node(consul=consul, cp=cp, manta=manta, mysql=my)
+
+    def tearDown(self):
+        logging.getLogger('manage').setLevel(logging.DEBUG)
+        self.node.end()
+
+    #def test_failover(self):
+    #    pass
 
 
 class TestSnapshotTask(unittest.TestCase):
@@ -270,8 +530,8 @@ class TestMySQL(unittest.TestCase):
         self.my.execute('query 2', ())
         self.assertEqual(len(self.my._query_buffer.items()), 0)
         exec_calls = [
-            mock.call.cursor().execute('query 1', params=()),
-            mock.call.cursor().execute('query 2', params=()),
+            mock.call.cursor().execute('query 1', dictionary=True, params=()),
+            mock.call.cursor().execute('query 2', dictionary=True, params=()),
             mock.call.commit(),
             mock.call.cursor().close()
         ]
@@ -284,9 +544,9 @@ class TestMySQL(unittest.TestCase):
         self.my.execute_many()
         self.assertEqual(len(self.my._query_buffer.items()), 0)
         exec_many_calls = [
-            mock.call.cursor().execute('query 3', params=()),
-            mock.call.cursor().execute('query 4', params=()),
-            mock.call.cursor().execute('query 5', params=()),
+            mock.call.cursor().execute('query 3', dictionary=True, params=()),
+            mock.call.cursor().execute('query 4', dictionary=True, params=()),
+            mock.call.cursor().execute('query 5', dictionary=True, params=()),
             mock.call.commit(),
             mock.call.cursor().close()
         ]
@@ -296,7 +556,7 @@ class TestMySQL(unittest.TestCase):
         self.my.query('query 6', ())
         self.assertEqual(len(self.my._query_buffer.items()), 0)
         query_calls = [
-            mock.call.cursor().execute('query 6', params=()),
+            mock.call.cursor().execute('query 6', dictionary=True, params=()),
             mock.call.cursor().fetchall(),
             mock.call.cursor().close()
         ]
@@ -370,7 +630,7 @@ class TestContainerPilotConfig(unittest.TestCase):
         cmd = cp.config['coprocesses'][0]['command']
         host_cfg_idx = cmd.index('-retry-join') + 1
         self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com:8500')
-        self.assertEqual(cp.state, REPLICA)
+        self.assertEqual(cp.state, UNASSIGNED)
 
     def test_parse_without_consul_agent(self):
         self.environ['CONSUL_AGENT'] = '0'
@@ -378,18 +638,19 @@ class TestContainerPilotConfig(unittest.TestCase):
         cp.load(envs=self.environ)
         self.assertEqual(cp.config['consul'], 'my.consul.example.com:8500')
         self.assertEqual(cp.config['coprocesses'], [])
-        self.assertEqual(cp.state, REPLICA)
+        self.assertEqual(cp.state, UNASSIGNED)
 
         self.environ['CONSUL_AGENT'] = ''
         cp = ContainerPilot()
         cp.load(envs=self.environ)
         self.assertEqual(cp.config['consul'], 'my.consul.example.com:8500')
         self.assertEqual(cp.config['coprocesses'], [])
-        self.assertEqual(cp.state, REPLICA)
+        self.assertEqual(cp.state, UNASSIGNED)
 
     def test_update(self):
         self.environ['CONSUL_AGENT'] = '1'
         cp = ContainerPilot()
+        cp.state = REPLICA
         cp.load(envs=self.environ)
         temp_file = tempfile.NamedTemporaryFile()
         cp.path = temp_file.name
@@ -400,7 +661,7 @@ class TestContainerPilotConfig(unittest.TestCase):
             self.assertEqual(updated.read(), '')
 
         # force an update
-        cp.state = UNASSIGNED
+        cp.state = PRIMARY
         cp.update()
         with open(temp_file.name, 'r') as updated:
             config = json.loads(updated.read())

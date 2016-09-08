@@ -9,7 +9,7 @@ import string
 import time
 from manage.libconsul import get_primary_host
 from manage.utils import debug, env, log, get_ip, to_flag, \
-    WaitTimeoutError
+    WaitTimeoutError, UnknownPrimary
 
 # pylint: disable=import-error,no-self-use,invalid-name,dangerous-default-value
 import mysql.connector as mysqlconn
@@ -290,24 +290,37 @@ class MySQL(object):
                                '/tmp/backup'])
         self.take_ownership()
 
+    def get_primary(self):
+        """
+        Returns the server-id and hostname of the primary as known to MySQL
+        """
+        with self.conn.cursor() as cursor:
+            cursor.execute('show slave status', dictionary=True)
+            result = cursor.fetchone()
+            if result:
+                return result['Master_Server_Id'], result['Master_Host']
 
+            cursor.execute('show slave hosts', dictionary=True)
+            result = cursor.fetchone()
+            if not result:
+                raise UnknownPrimary('no prior replication setup found')
+            return result['Master_id'], result['Host']
 
-@debug
-def set_primary_for_replica(node):
-    """
-    Set up GTID-based replication to the primary; once this is set the
-    replica will automatically try to catch up with the primary's last
-    transactions.
-    """
-    primary = get_primary_host(node.consul)
-    node.mysql.add('CHANGE MASTER TO '
-                   'MASTER_HOST           = %s, '
-                   'MASTER_USER           = %s, '
-                   'MASTER_PASSWORD       = %s, '
-                   'MASTER_PORT           = 3306, '
-                   'MASTER_CONNECT_RETRY  = 60, '
-                   'MASTER_AUTO_POSITION  = 1, '
-                   'MASTER_SSL            = 0; ',
-                   (primary, node.mysql.repl_user, node.mysql.repl_password))
-    node.mysql.add('START SLAVE;')
-    node.mysql.execute_many()
+    @debug(name='mysql.setup_replication')
+    def setup_replication(self, primary_ip):
+        """
+        Set up GTID-based replication to the primary; once this is set the
+        replica will automatically try to catch up with the primary's last
+        transactions.
+        """
+        self.add('CHANGE MASTER TO '
+                 'MASTER_HOST           = %s, '
+                 'MASTER_USER           = %s, '
+                 'MASTER_PASSWORD       = %s, '
+                 'MASTER_PORT           = 3306, '
+                 'MASTER_CONNECT_RETRY  = 60, '
+                 'MASTER_AUTO_POSITION  = 1, '
+                 'MASTER_SSL            = 0; ',
+                 (primary_ip, self.repl_user, self.repl_password))
+        self.add('START SLAVE;')
+        self.execute_many()
