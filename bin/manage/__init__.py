@@ -27,15 +27,18 @@ class Node(object):
     Node represents the state of our running container and carries
     around the MySQL config, and clients for Consul and Manta.
     """
-    def __init__(self, mysql=None, cp=None, consul=None, manta=None):
+    def __init__(self, mysql=None, cp=None, consul=None, manta=None,
+                 name='', ip=''):
         self.mysql = mysql
         self.consul = consul
         self.manta = manta
         self.cp = cp
 
-        self.hostname = socket.gethostname()
-        self.name = 'mysql-{}'.format(self.hostname)
-        self.ip = get_ip()
+        # these fields can all be overriden for dependency injection
+        # in testing only; don't pass these args in normal operation
+        self.hostname = name if name else socket.gethostname()
+        self.name = name if name else 'mysql-{}'.format(self.hostname)
+        self.ip = ip if ip else get_ip()
 
     def is_primary(self):
         """
@@ -86,7 +89,6 @@ def pre_start(node):
     so we're just going to make sure the directory structures are in
     place and then let the first health check handler take it from there
     """
-    assert node.mysql and node.manta and node.consul
     # make sure that if we've pulled in an external data volume that
     # the mysql user can read it
     my = node.mysql
@@ -108,7 +110,6 @@ def health(node):
     Also acts as a check for whether the ContainerPilot configuration needs
     to be reloaded (if it's been changed externally).
     """
-    assert node.cp and node.consul and node.manta
     try:
         if node.cp.update():
             node.cp.reload()
@@ -143,7 +144,6 @@ def health(node):
 @debug
 def on_change(node):
     """ The top-level ContainerPilot onChange handler """
-    assert node.cp and node.consul
 
     @debug(log_output=True)
     def am_i_primary():
@@ -240,7 +240,6 @@ def snapshot_task(node):
     Create a snapshot and send it to the object store if this is the
     node and time to do so.
     """
-    assert node.cp and node.manta and node.mysql
 
     @debug
     def is_backup_running():
