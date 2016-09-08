@@ -165,6 +165,77 @@ class TestPreStart(unittest.TestCase):
         self.assertFalse(self.node_1.node.mysql.initialize_db.called)
 
 
+class TestHealth(unittest.TestCase):
+    pass
+
+class TestOnChange(unittest.TestCase):
+    pass
+
+class TestSnapshotTask(unittest.TestCase):
+
+    def setUp(self):
+        logging.getLogger('manage').setLevel(logging.WARN)
+        consul = mock.MagicMock()
+        manta = mock.MagicMock()
+        my = mock.MagicMock()
+        cp = ContainerPilot()
+        cp.state = PRIMARY
+        my.datadir = tempfile.mkdtemp()
+        self.node = manage.Node(consul=consul, cp=cp, manta=manta, mysql=my)
+
+    def tearDown(self):
+        logging.getLogger('manage').setLevel(logging.DEBUG)
+        try:
+            os.remove('/tmp/mysql-backup-run')
+        except OSError as ex:
+            pass
+
+    def test_not_snapshot_node(self):
+        """ Don't snapshot if this isn't the snapshot node """
+        # TODO update when this logic changes
+        self.node.cp.state = REPLICA
+        manage.snapshot_task(self.node)
+        self.assertFalse(self.node.mysql.query.called)
+
+    def test_binlog_stale(self):
+        """ Snapshot if the binlog is stale even if its not time to do so """
+        self.node.consul.is_check_healthy.return_value = True
+        self.node.consul.get.return_value = 'mybackup1'
+        self.node.mysql.query.return_value = [['mybackup2']]
+
+        with mock.patch('manage.write_snapshot') as ws:
+            manage.snapshot_task(self.node)
+            self.node.mysql.query.assert_called_once()
+            self.node.consul.get.assert_called_once()
+            self.assertTrue(ws.called)
+
+    def test_backup_already_running(self):
+        """ Don't snapshot if there's already a snapshot running """
+        self.node.consul.is_check_healthy.return_value = False
+        self.node.consul.get.return_value = 'mybackup1'
+        self.node.mysql.query.return_value = [['mybackup2']]
+
+        with mock.patch('manage.write_snapshot') as ws:
+            lockfile_name = '/tmp/mysql-backup-run'
+            try:
+                backup_lock = open(lockfile_name, 'w')
+                fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
+                manage.snapshot_task(self.node)
+            finally:
+                fcntl.flock(backup_lock, fcntl.LOCK_UN)
+                backup_lock.close()
+            self.assertFalse(ws.called)
+
+    def test_time_to_snapshot(self):
+        """ Snapshot if the timer has elapsed even if the binlog isn't stale"""
+        self.node.consul.is_check_healthy.return_value = False
+        self.node.consul.get.return_value = 'mybackup1'
+        self.node.mysql.query.return_value = [['mybackup1']]
+        with mock.patch('manage.write_snapshot') as ws:
+            manage.snapshot_task(self.node)
+            self.assertTrue(ws.called)
+
+
 class TestMySQL(unittest.TestCase):
 
     def setUp(self):
