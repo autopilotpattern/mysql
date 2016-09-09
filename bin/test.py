@@ -139,7 +139,7 @@ class TestPreStart(unittest.TestCase):
         Given a snapshot that has been marked successful but not
         completed, a new node will wait and not crash.
         """
-        self.node.consul = Consul(TEST_ENVIRON)
+        self.node.consul = Consul(get_environ())
         self.node.consul.client = mock.MagicMock()
 
         def kv_gets(*args, **kwargs):
@@ -162,15 +162,14 @@ class TestHealth(unittest.TestCase):
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
         consul = mock.MagicMock()
-        manta = mock.MagicMock()
         my = mock.MagicMock()
         cp = ContainerPilot()
-        cp.load(TEST_ENVIRON)
+        cp.load(get_environ())
+        temp_file = tempfile.NamedTemporaryFile()
+        cp.path = temp_file.name
         my.datadir = tempfile.mkdtemp()
-        self.node = manage.Node(
-            consul=consul, cp=cp, manta=manta, mysql=my,
-            ip='192.168.1.101', name='node1'
-        )
+        self.node = manage.Node(consul=consul, cp=cp, mysql=my,
+                                ip='192.168.1.101', name='node1')
 
     def tearDown(self):
         logging.getLogger('manage').setLevel(logging.DEBUG)
@@ -187,7 +186,7 @@ class TestHealth(unittest.TestCase):
         self.node.mysql.wait_for_connection.return_value = True
         self.node.mysql.get_primary.side_effect = UnknownPrimary()
 
-        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul = Consul(envs=get_environ())
         self.node.consul.client = mock.MagicMock()
         self.node.consul.mark_as_primary = mock.MagicMock(return_value=True)
         self.node.consul.renew_session = mock.MagicMock()
@@ -218,11 +217,11 @@ class TestHealth(unittest.TestCase):
     def test_primary_no_replicas(self):
         """ Health check if previously initialized but with no replicas """
         os.mkdir(self.LOCK_PATH, 0700)
-        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql = MySQL(envs=get_environ())
         self.node.mysql._conn = mock.MagicMock()
         self.node.mysql.query = mock.MagicMock(return_value=())
 
-        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul = Consul(envs=get_environ())
         self.node.consul.client = mock.MagicMock()
         self.node.consul.renew_session = mock.MagicMock()
         self.node.consul.client.health.service.return_value = [0, [{
@@ -247,11 +246,11 @@ class TestHealth(unittest.TestCase):
         needs to be a failing health check.
         """
         os.mkdir(self.LOCK_PATH, 0700)
-        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql = MySQL(envs=get_environ())
         self.node.mysql._conn = mock.MagicMock()
         self.node.mysql.query = mock.MagicMock(return_value=())
 
-        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul = Consul(envs=get_environ())
         self.node.consul.client = mock.MagicMock()
         self.node.consul.renew_session = mock.MagicMock()
         self.node.consul.client.health.service.return_value = []
@@ -273,7 +272,7 @@ class TestHealth(unittest.TestCase):
         Typical health check for replica with established replication
         """
         os.mkdir(self.LOCK_PATH, 0700)
-        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql = MySQL(envs=get_environ())
         self.node.mysql._conn = mock.MagicMock()
         self.node.mysql.query = mock.MagicMock(return_value=[
             {'Master_Server_Id': 'node2', 'Master_Host': '192.168.1.102'}])
@@ -293,10 +292,10 @@ class TestHealth(unittest.TestCase):
         failed but a primary already exists in Consul.
         """
         os.mkdir(self.LOCK_PATH, 0700)
-        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql = MySQL(envs=get_environ())
         self.node.mysql._conn = mock.MagicMock()
         self.node.mysql.query = mock.MagicMock(return_value=())
-        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul = Consul(envs=get_environ())
         self.node.consul.client = mock.MagicMock()
         self.node.consul.renew_session = mock.MagicMock()
         self.node.consul.client.health.service.return_value = [0, [{
@@ -321,7 +320,7 @@ class TestHealth(unittest.TestCase):
         """
         Given uninitialized node w/ a health primary, set up replication.
         """
-        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql = MySQL(envs=get_environ())
         self.node.mysql._conn = mock.MagicMock()
         self.node.mysql.query = mock.MagicMock()
 
@@ -334,7 +333,7 @@ class TestHealth(unittest.TestCase):
         self.node.mysql.wait_for_connection = mock.MagicMock(return_value=True)
         self.node.mysql.setup_replication = mock.MagicMock(return_value=True)
 
-        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul = Consul(envs=get_environ())
         self.node.consul.client = mock.MagicMock()
         self.node.consul.client.health.service.return_value = [0, [{
             'Service' : {'ID': 'node2', 'Address': '192.168.1.102'},
@@ -355,13 +354,13 @@ class TestHealth(unittest.TestCase):
         """
         Given uninitialized node w/ failed replication setup, fail
         """
-        self.node.mysql = MySQL(envs=TEST_ENVIRON)
+        self.node.mysql = MySQL(envs=get_environ())
         self.node.mysql._conn = mock.MagicMock()
         self.node.mysql.query = mock.MagicMock(return_value=())
         self.node.mysql.wait_for_connection = mock.MagicMock(return_value=True)
         self.node.mysql.setup_replication = mock.MagicMock(return_value=True)
 
-        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul = Consul(envs=get_environ())
         self.node.consul.client = mock.MagicMock()
         self.node.consul.client.health.service.return_value = [0, [{
             'Service' : {'ID': 'node2', 'Address': '192.168.1.102'},
@@ -389,7 +388,7 @@ class TestHealth(unittest.TestCase):
         self.node.mysql.wait_for_connection.return_value = True
         self.node.mysql.get_primary.side_effect = UnknownPrimary()
 
-        self.node.consul = Consul(envs=TEST_ENVIRON)
+        self.node.consul = Consul(envs=get_environ())
         self.node.consul.client = mock.MagicMock()
         self.node.consul.mark_as_primary = mock.MagicMock(return_value=False)
         self.node.consul.client.health.service.return_value = ()
@@ -431,6 +430,8 @@ class TestSnapshotTask(unittest.TestCase):
         manta = mock.MagicMock()
         my = mock.MagicMock()
         cp = ContainerPilot()
+        cp.load(get_environ())
+        my.datadir = tempfile.mkdtemp()
         cp.state = PRIMARY
         my.datadir = tempfile.mkdtemp()
         self.node = manage.Node(consul=consul, cp=cp, manta=manta, mysql=my)
@@ -492,7 +493,7 @@ class TestMySQL(unittest.TestCase):
 
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
-        self.environ = TEST_ENVIRON.copy()
+        self.environ = get_environ()
         self.my = MySQL(self.environ)
         self.my._conn = mock.MagicMock()
 
@@ -584,7 +585,7 @@ class TestMySQL(unittest.TestCase):
 class TestConsul(unittest.TestCase):
 
     def setUp(self):
-        self.environ = TEST_ENVIRON.copy()
+        self.environ = get_environ()
 
     def test_parse_with_consul_agent(self):
         self.environ['CONSUL_AGENT'] = '1'
@@ -606,7 +607,7 @@ class TestContainerPilotConfig(unittest.TestCase):
 
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
-        self.environ = TEST_ENVIRON.copy()
+        self.environ = get_environ()
 
     def tearDown(self):
         logging.getLogger('manage').setLevel(logging.DEBUG)
@@ -663,7 +664,7 @@ class TestContainerPilotConfig(unittest.TestCase):
 class TestMantaConfig(unittest.TestCase):
 
     def setUp(self):
-        self.environ = TEST_ENVIRON.copy()
+        self.environ = get_environ()
 
     def test_parse(self):
         manta = Manta(self.environ)
@@ -741,6 +742,8 @@ TEST_ENVIRON = {
         '-----END RSA PRIVATE KEY-----')
 }
 
+def get_environ():
+    return TEST_ENVIRON.copy()
 
 
 if __name__ == '__main__':
