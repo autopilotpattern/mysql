@@ -404,22 +404,233 @@ class TestHealth(unittest.TestCase):
 
 class TestOnChange(unittest.TestCase):
 
+
     def setUp(self):
-        # logging.getLogger('manage').setLevel(logging.WARN)
+        logging.getLogger('manage').setLevel(logging.WARN)
         consul = mock.MagicMock()
-        manta = mock.MagicMock()
         my = mock.MagicMock()
         cp = ContainerPilot()
-        cp.state = PRIMARY
-        my.datadir = tempfile.mkdtemp()
-        self.node = manage.Node(consul=consul, cp=cp, manta=manta, mysql=my)
+        cp.load(get_environ())
+        temp_file = tempfile.NamedTemporaryFile()
+        cp.path = temp_file.name
+        cp.reload = mock.MagicMock(return_value=True)
+
+        self.node = manage.Node(consul=consul, cp=cp, mysql=my,
+                                ip='192.168.1.101', name='node1')
 
     def tearDown(self):
         logging.getLogger('manage').setLevel(logging.DEBUG)
-        self.node.end()
 
-    #def test_failover(self):
-    #    pass
+    def test_this_node_already_set_primary(self):
+        """
+        Given that another node has run the failover and set this node
+        as primary, then this node will be primary and updates its
+        ContainerPilot config as required
+        """
+        self.node.mysql.get_primary.return_value = ('node1', '192.168.1.101')
+        manage.on_change(self.node)
+
+        self.node.consul.put.assert_called_once()
+        self.node.cp.reload.assert_called_once()
+        self.assertEqual(self.node.cp.state, PRIMARY)
+
+    def test_another_node_already_set_primary(self):
+        """
+        Given that another node has run the failover and set some other
+        node as primary, then this node will not be primary and needs to
+        do nothing.
+        """
+        self.node.mysql.get_primary.return_value = ('node1', '192.168.1.102')
+        manage.on_change(self.node)
+
+        self.assertFalse(self.node.consul.put.called)
+        self.node.consul.get_primary.assert_called_once()
+        self.assertFalse(self.node.cp.reload.called)
+        self.assertEqual(self.node.cp.state, REPLICA)
+
+    def test_failover_runs_this_node_is_primary(self):
+        """
+        Given a successful failover where this node is marked primary,
+        the node will update its ContainerPilot config as required
+        """
+        def query_results(*args, **kwargs):
+            yield ()
+            yield () # and after two hits we've set up replication
+            yield [{'Master_Server_Id': 'node1', 'Master_Host': '192.168.1.101'}]
+
+        self.node.mysql = MySQL(envs=get_environ())
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(side_effect=query_results())
+        self.node.mysql.failover = mock.MagicMock()
+
+        def consul_get_primary_results(*args, **kwargs):
+            yield UnknownPrimary()
+            yield UnknownPrimary()
+            yield ('node1', '192.168.1.101')
+
+        self.node.consul.get_primary.side_effect = consul_get_primary_results()
+        self.node.consul.lock.return_value = True
+        self.node.consul.client.health.service.return_value = [0, [
+            {'Service' : {'ID': 'node1', 'Address': '192.168.1.101'}},
+            {'Service' : {'ID': 'node3', 'Address': '192.168.1.103'}}
+        ]]
+
+        manage.on_change(self.node)
+
+        self.assertEqual(self.node.consul.get_primary.call_count, 2)
+        self.node.consul.lock.assert_called_once()
+        self.node.consul.client.health.service.assert_called_once()
+        self.node.consul.unlock.assert_called_once()
+        self.node.consul.put.assert_called_once()
+        self.node.cp.reload.assert_called_once()
+        self.assertEqual(self.node.cp.state, PRIMARY)
+
+    def test_failover_runs_another_node_is_primary(self):
+        """
+        Given a successful failover where another node is marked primary,
+        the node will not update its ContainerPilot config
+        """
+        def query_results(*args, **kwargs):
+            yield ()
+            yield () # and after two hits we've set up replication
+            yield [{'Master_Server_Id': 'node1', 'Master_Host': '192.168.1.102'}]
+
+        self.node.mysql = MySQL(envs=get_environ())
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(side_effect=query_results())
+        self.node.mysql.failover = mock.MagicMock()
+
+        def consul_get_primary_results(*args, **kwargs):
+            yield UnknownPrimary()
+            yield UnknownPrimary()
+            yield ('node1', '192.168.1.102')
+
+        self.node.consul.get_primary.side_effect = consul_get_primary_results()
+        self.node.consul.lock.return_value = True
+        self.node.consul.client.health.service.return_value = [0, [
+            {'Service' : {'ID': 'node1', 'Address': '192.168.1.101'}},
+            {'Service' : {'ID': 'node3', 'Address': '192.168.1.102'}}
+        ]]
+
+        manage.on_change(self.node)
+
+        self.assertEqual(self.node.consul.get_primary.call_count, 2)
+        self.node.consul.lock.assert_called_once()
+        self.node.consul.client.health.service.assert_called_once()
+        self.node.consul.unlock.assert_called_once()
+        self.assertFalse(self.node.cp.reload.called)
+        self.assertEqual(self.node.cp.state, REPLICA)
+
+    def test_failover_fails(self):
+        """
+        Given a failed failover, ensure we unlock the failover lock
+        but exit with an unhandled exception without trying to set
+        status.
+        """
+        self.node.mysql = MySQL(envs=get_environ())
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(return_value=())
+        self.node.mysql.failover = mock.MagicMock(side_effect=Exception('fail'))
+
+        self.node.consul.get_primary.side_effect = UnknownPrimary()
+        self.node.consul.lock.return_value = True
+        self.node.consul.client.health.service.return_value = [0, [
+            {'Service' : {'ID': 'node1', 'Address': '192.168.1.101'}},
+            {'Service' : {'ID': 'node3', 'Address': '192.168.1.102'}}
+        ]]
+
+        try:
+            manage.on_change(self.node)
+            self.fail('Expected unhandled exception but did not.')
+        except:
+            pass
+
+        self.assertEqual(self.node.consul.get_primary.call_count, 2)
+        self.node.consul.lock.assert_called_once()
+        self.node.consul.client.health.service.assert_called_once()
+        self.node.consul.unlock.assert_called_once()
+        self.assertFalse(self.node.cp.reload.called)
+        self.assertEqual(self.node.cp.state, UNASSIGNED)
+
+
+    def test_failover_locked_this_node_is_primary(self):
+        """
+        Given another node is running a failover, wait for that failover.
+        Given this this node is marked primary, the node will update its
+        ContainerPilot config as required.
+        """
+        def query_results(*args, **kwargs):
+            yield ()
+            yield () # and after two hits we've set up replication
+            yield [{'Master_Server_Id': 'node1', 'Master_Host': '192.168.1.101'}]
+
+        self.node.mysql = MySQL(envs=get_environ())
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(side_effect=query_results())
+        self.node.mysql.failover = mock.MagicMock()
+
+        def consul_get_primary_results(*args, **kwargs):
+            yield UnknownPrimary()
+            yield UnknownPrimary()
+            yield ('node1', '192.168.1.101')
+
+        def lock_sequence(*args, **kwargs):
+            yield True
+            yield False
+
+        self.node.consul.get_primary.side_effect = consul_get_primary_results()
+        self.node.consul.lock.return_value = False
+        self.node.consul.is_locked.side_effect = lock_sequence()
+
+        manage.on_change(self.node)
+
+        self.assertEqual(self.node.consul.get_primary.call_count, 2)
+        self.node.consul.lock.assert_called_once()
+        self.assertFalse(self.node.consul.client.health.service.called)
+        self.assertFalse(self.node.consul.unlock.called)
+        self.node.consul.put.assert_called_once()
+        self.node.cp.reload.assert_called_once()
+        self.assertEqual(self.node.cp.state, PRIMARY)
+
+
+    def test_failover_locked_another_node_is_primary(self):
+        """
+        Given another node is running a failover, wait for that failover.
+        Given this this node is not marked primary, the node will not
+        update its ContainerPilot config.
+        """
+        def query_results(*args, **kwargs):
+            yield ()
+            yield () # and after two hits we've set up replication
+            yield [{'Master_Server_Id': 'node2', 'Master_Host': '192.168.1.102'}]
+
+        self.node.mysql = MySQL(envs=get_environ())
+        self.node.mysql._conn = mock.MagicMock()
+        self.node.mysql.query = mock.MagicMock(side_effect=query_results())
+        self.node.mysql.failover = mock.MagicMock()
+
+        def consul_get_primary_results(*args, **kwargs):
+            yield UnknownPrimary()
+            yield UnknownPrimary()
+            yield ('node2', '192.168.1.102')
+
+        def lock_sequence(*args, **kwargs):
+            yield True
+            yield False
+
+        self.node.consul.get_primary.side_effect = consul_get_primary_results()
+        self.node.consul.lock.return_value = False
+        self.node.consul.is_locked.side_effect = lock_sequence()
+
+        manage.on_change(self.node)
+
+        self.assertEqual(self.node.consul.get_primary.call_count, 2)
+        self.node.consul.lock.assert_called_once()
+        self.assertFalse(self.node.consul.client.health.service.called)
+        self.assertFalse(self.node.consul.unlock.called)
+        self.assertFalse(self.node.consul.put.called)
+        self.assertFalse(self.node.cp.reload.called)
+        self.assertEqual(self.node.cp.state, REPLICA)
 
 
 class TestSnapshotTask(unittest.TestCase):

@@ -322,3 +322,23 @@ class MySQL(object):
                  (primary_ip, self.repl_user, self.repl_password))
         self.add('START SLAVE;')
         self.execute_many()
+
+    @debug(name='mysql.failover')
+    def failover(self, ips):
+        """
+        Call external `mysqlrpladmin failover`. This will determine
+        best primary candidate, set up replication for all candidates
+        to the new primary, and catch up stale replicas.
+        """
+        user = self.repl_user
+        passwd = self.repl_password
+        candidates = ','.join(
+            ["{}:'{}'@{}".format(user, passwd, ip) for ip in ips]
+        )
+        return subprocess.check_call(
+            ['mysqlrpladmin',
+             '--slaves={}'.format(candidates),
+             '--candidates={}'.format(candidates),
+             '--rpl-user={}:{}'.format(user, passwd),
+             'failover']
+        )

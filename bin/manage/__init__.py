@@ -164,92 +164,65 @@ def health(node):
 def on_change(node):
     """ The top-level ContainerPilot onChange handler """
 
-    @debug(log_output=True)
-    def am_i_primary():
-        """ Try to figure out if this is the primary now """
-        results = node.mysql.query(node.mysql.conn, 'SHOW SLAVE STATUS', ())
-        log.debug('[on_change DEBUG] %s', results)
-        if results:
-            master_ip = results[0][1]
-            log.debug('[on_change] master is %s and my IP is %s', master_ip, node.ip)
-            if master_ip != node.ip:
-                return False
-        return False
-
-    @debug
-    def set_me_primary(node):
-        """ Set this node as the primary """
-        node.cp.state = PRIMARY
+    # first check if this node has already been set primary by a completed
+    # call to failover and update the ContainerPilot config as needed.
+    if node.is_primary():
+        log.debug('[on_change] this node is primary, no failover required.')
         if node.cp.update():
-            # TODO: double-check this?
             # we're ignoring the lock here intentionally
             node.consul.put(PRIMARY_KEY, node.hostname)
             node.cp.reload()
-
-    # check if there's a healthy primary first otherwise this
-    # is an infinite loop! we only continue if there is an
-    # exception when we try to get the hostname
-    if node.is_primary():
-        log.debug('[on_change] this node is primary, no failover required.')
         return
+
+    # check if another node has been set primary already and is reporting
+    # as healthy, in which case there's no failover required. Note that
+    # we can't simply check if we're a replica via .is_replica() b/c that
+    # trusts mysqld's view of the world.
     try:
-        if node.consul.get_primary(timeout=1):
-            log.debug('[on_change] primary is already healthy, no failover required')
-            return
+        node.consul.get_primary(timeout=1)
+        log.debug('[on_change] primary is already healthy, no failover required')
+        return
     except UnknownPrimary:
         pass
-    if am_i_primary():
-        set_me_primary(node.consul)
+
+    _key = 'FAILOVER_IN_PROGRESS'
+    session_id = node.consul.create_session(_key, ttl=120)
+    if node.consul.lock(_key, node.hostname, session_id):
+        try:
+            nodes = node.consul.client.health.service(REPLICA, passing=True)[1]
+            ips = [instance['Service']['Address'] for instance in nodes]
+            log.info('[on_change] Executing failover with candidates: %s', ips)
+            node.mysql.failover(ips)
+        finally:
+            # ConsulError, subprocess.CalledProcessError will
+            # just bubble up and return a non-zero exit code. In this
+            # case either another instance that didn't overlap in time
+            # will complete failover or we'll be left w/o a primary and
+            # require manual intervention via `mysqlrpladmin failover`
+            # TODO: can/should we try to recover from this state?
+            node.consul.unlock(_key, session_id)
+    else:
+        log.info('[on_change] Failover in progress on another node, '
+                 'waiting to complete.')
+        while True:
+            if not node.consul.is_locked(_key):
+                break
+            time.sleep(3)
+
+    # need to determine replicaton status at this point, so make
+    # sure we refresh .state from mysqld/Consul
+    node.cp.state = UNASSIGNED
+    if node.is_primary():
+        if node.cp.update():
+            # we're ignoring the lock here intentionally
+            node.consul.put(PRIMARY_KEY, node.hostname)
+            node.cp.reload()
         return
 
-    try:
-        log.debug('[on_change DEBUG] entering failover')
-
-        _key = 'FAILOVER_IN_PROGRESS'
-        log.debug('[on_change DEBUG] _key=%s', _key)
-
-        session_id = node.consul.create_session(_key, ttl=120)
-        log.debug('[on_change DEBUG] session_id=%s', session_id)
-        ok = node.consul.lock(_key, node.hostname, session_id)
-        log.debug('[on_change DEBUG] consul.kv.put -> %s', ok)
-        if not ok:
-            log.info('[on_change] Waiting for failover to complete')
-            while True:
-                if node.consul.is_locked(_key):
-                    time.sleep(3)
-        else:
-            log.debug('[on_change] setting up failover')
-            nodes = node.consul.health.service(REPLICA, passing=True)[1]
-            ips = [instance['Service']['Address'] for instance in nodes]
-            repl_user = node.mysql.repl_user
-            repl_password = node.mysql.repl_password
-            candidates = ','.join(["{}:'{}'@{}".format(repl_user, repl_password, ip)
-                                   for ip in ips])
-            log.info('[on_change] Executing failover with candidates: %s', ips)
-            subprocess.check_call(
-                ['mysqlrpladmin',
-                 '--slaves={}'.format(candidates),
-                 '--candidates={}'.format(candidates),
-                 '--rpl-user={}:{}'.format(repl_user, repl_password),
-                 'failover']
-            )
-
-        log.debug('[on_change] failover complete, figuring out my slave status: %s', node.ip)
-        if am_i_primary():
-            set_me_primary(node.consul)
-            return
-        else:
-            log.debug('[on_change] this node is a replica')
-
-    except Exception as ex:
-        log.exception(ex)
+    if node.cp.state == UNASSIGNED:
+        log.error('[on_change] this node is neither primary or replica '
+                  'after failover; check replication status on cluster.')
         sys.exit(1)
-    finally:
-        try:
-            log.debug('[on_change] unlocking session')
-            node.consul.unlock(_key, session_id)
-        except Exception:
-            log.debug('[on_change] could not unlock session')
 
 
 @debug
