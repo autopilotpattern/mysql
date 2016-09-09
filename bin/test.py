@@ -1,12 +1,6 @@
 import json
-from Queue import Queue as Queue
-from Queue import Empty, Full
 import os
-import socket
-import sys
 import tempfile
-import threading
-import time
 import unittest
 
 # pylint: disable=import-error
@@ -19,73 +13,6 @@ from manage.libconsul import Consul
 from manage.libmanta import Manta
 from manage.libmysql import MySQL
 from manage.utils import *
-
-
-thread_data = threading.local()
-
-def trace_wait(frame, event, arg):
-    if event != 'call':
-        return
-    func_name = frame.f_code.co_name
-    if func_name in thread_data.trace_into or func_name == '_mock_call':
-        node_name = threading.current_thread().name
-        timeout = thread_data.timeout
-        try:
-            # block until new work is available but no more than 5
-            # seconds before killing the thread
-            val = thread_data.queue.get(True, timeout)
-            if val == 'quit':
-                raise Empty
-            thread_data.queue.task_done()
-        except Empty:
-            sys.exit(0)
-
-
-class TestNode(object):
-    """
-    TestNode is a context containing a manage.Node object and which runs
-    the function under test in its own thread. The function under test
-    is stepped thru with each `tick()` call on this object.
-    """
-    def __init__(self, node=None, fn=None, trace_into=[]):
-        self.node = node
-        self._nodeq = Queue(1)
-        self._thread = threading.Thread(
-            target=self.step_thru,
-            name=node.name,
-            args=(fn, node),
-            kwargs=dict(queue=self._nodeq, trace_into=trace_into))
-        self._thread.start()
-
-    def step_thru(self, fn, *args, **kwargs):
-        """
-        Step thru the function `fn`. The function will block every time it
-        calls a function w/ a name listed in `trace_into` until a message
-        is pushed onto the `queue` or a number of seconds equal to
-        `test_timeout` passes. Exceptions are allowed to bubble up and
-        crash the thread.
-        """
-        thread_data.queue = kwargs.pop('queue')
-        thread_data.trace_into = kwargs.pop('trace_into', None)
-        thread_data.timeout = kwargs.pop('test_timeout', 5)
-        sys.settrace(trace_wait)
-        fn(*args, **kwargs)
-
-    def tick(self, val=True):
-        print('tick!: {}'.format(val))
-        try:
-            self._nodeq.put(val, True, 1)
-        except Full:
-            raise Full('{} raised Full at {}'.format(self.node.name, val))
-        time.sleep(0.01) # ensure we yield the main thread
-
-    def end(self):
-        try:
-            self._nodeq.put('quit', True, 1)
-        except Full:
-            pass
-        finally:
-            self._thread.join()
 
 
 class TestPreStart(unittest.TestCase):
@@ -651,7 +578,7 @@ class TestSnapshotTask(unittest.TestCase):
         logging.getLogger('manage').setLevel(logging.DEBUG)
         try:
             os.remove('/tmp/mysql-backup-run')
-        except OSError as ex:
+        except OSError:
             pass
 
     def test_not_snapshot_node(self):
