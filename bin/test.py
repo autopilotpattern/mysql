@@ -139,27 +139,16 @@ class TestPreStart(unittest.TestCase):
         Given a snapshot that has been marked successful but not
         completed, a new node will wait and not crash.
         """
-        trace_into=['render', 'has_snapshot', 'get_backup',
-                    'restore_from_snapshot', 'initialize_db', 'get']
-
         self.node.consul = Consul(TEST_ENVIRON)
         self.node.consul.client = mock.MagicMock()
-        self.node.consul.client.kv.get.side_effect = pyconsul.ConsulException('')
 
-        node = TestNode(node=self.node, fn=manage.pre_start,
-                        trace_into=trace_into)
+        def kv_gets(*args, **kwargs):
+            yield pyconsul.ConsulException()
+            yield [0, {'Value': 'ok'}]
 
-        node.tick('pre_start')
-        node.tick('render')
-        node.tick('has_snapshot')
-        node.tick('get')
-        node.tick('get')
-        self.node.consul.client.kv.get.side_effect = None
-        self.node.consul.client.kv.get.return_value = [0,{'Value': 'ok'}]
-        node.tick('get_backup')
-        node.tick('restore_from_snapshot')
-        node.end()
+        self.node.consul.client.kv.get.side_effect = kv_gets()
 
+        manage.pre_start(self.node)
         self.node.manta.get_backup.assert_called_once()
         self.assertEqual(self.node.consul.client.kv.get.call_count, 2)
         self.node.mysql.restore_from_snapshot.assert_called_once()
