@@ -7,7 +7,6 @@ import socket
 import subprocess
 import string
 import time
-from manage.libconsul import get_primary_host
 from manage.utils import debug, env, log, get_ip, to_flag, \
     WaitTimeoutError, UnknownPrimary
 
@@ -107,7 +106,7 @@ class MySQL(object):
                     raise WaitTimeoutError(ex)
                 time.sleep(1)
 
-    def add(self, stmt, params):
+    def add(self, stmt, params=()):
         """ Adds a new SQL statement to an internal query buffer """
         self._query_buffer[stmt] = params
 
@@ -126,12 +125,13 @@ class MySQL(object):
         self._execute(conn, results=False, commit=True)
 
     @debug(name='mysql.query')
-    def query(self, sql, params=(), conn=None):
+    def query(self, sql, params=(), conn=None, dictionary=True):
         """ Execute a SQL query with params and return results. """
         self.add(sql, params)
-        return self._execute(conn=conn, results=True, commit=False)
+        return self._execute(conn=conn, results=True, commit=False,
+                             dictionary=True)
 
-    def _execute(self, conn=None, results=False, commit=True):
+    def _execute(self, conn=None, results=False, commit=True, dictionary=True):
         """
         Execute and commit all composed statements and flushes the buffer
         """
@@ -142,7 +142,7 @@ class MySQL(object):
             for stmt, params in self._query_buffer.items():
                 log.debug(stmt)
                 log.debug(params)
-                cur.execute(stmt, params=params)
+                cur.execute(stmt, params=params, dictionary=True)
             if commit:
                 conn.commit()
             if results:
@@ -208,13 +208,13 @@ class MySQL(object):
             self.mysql_root_password = passwd
             log.info('Generated root password: %s', self.mysql_root_password)
 
-        self.add('SET @@SESSION.SQL_LOG_BIN=0;', ())
-        self.add('DELETE FROM `mysql`.`user` where user != \'mysql.sys\';', ())
+        self.add('SET @@SESSION.SQL_LOG_BIN=0;')
+        self.add('DELETE FROM `mysql`.`user` where user != \'mysql.sys\';')
         self.add('CREATE USER `root`@`%` IDENTIFIED BY %s ;',
                  (self.mysql_root_password,))
-        self.add('GRANT ALL ON *.* TO `root`@`%` WITH GRANT OPTION ;', ())
-        self.add('DROP DATABASE IF EXISTS test ;', ())
-        self.add('FLUSH PRIVILEGES ;', ())
+        self.add('GRANT ALL ON *.* TO `root`@`%` WITH GRANT OPTION ;')
+        self.add('DROP DATABASE IF EXISTS test ;')
+        self.add('FLUSH PRIVILEGES ;')
         self.execute_many(conn=conn)
 
     def expire_root_password(self, conn):
@@ -243,8 +243,8 @@ class MySQL(object):
                  .format(self.mysql_user), (self.mysql_password,))
         if self.mysql_db:
             self.add('GRANT ALL ON `{}`.* TO `{}`@`%`;'
-                     .format(self.mysql_db, self.mysql_user), ())
-        self.add('FLUSH PRIVILEGES;', ())
+                     .format(self.mysql_db, self.mysql_user))
+        self.add('FLUSH PRIVILEGES;')
         self.execute_many(conn=conn)
 
     def create_repl_user(self, conn):
@@ -259,8 +259,8 @@ class MySQL(object):
                  ', LOCK TABLES, GRANT OPTION, REPLICATION CLIENT'
                  ', RELOAD, DROP, CREATE '
                  'ON *.* TO `{}`@`%`; '
-                 .format(self.repl_user), ())
-        self.add('FLUSH PRIVILEGES;', ())
+                 .format(self.repl_user))
+        self.add('FLUSH PRIVILEGES;')
         self.execute_many(conn=conn)
 
     def set_timezone_info(self):
@@ -290,21 +290,19 @@ class MySQL(object):
                                '/tmp/backup'])
         self.take_ownership()
 
+    @debug(name='mysql.get_primary')
     def get_primary(self):
         """
         Returns the server-id and hostname of the primary as known to MySQL
         """
-        with self.conn.cursor() as cursor:
-            cursor.execute('show slave status', dictionary=True)
-            result = cursor.fetchone()
-            if result:
-                return result['Master_Server_Id'], result['Master_Host']
+        result = self.query('show slave status')
+        if result:
+            return result[0]['Master_Server_Id'], result[0]['Master_Host']
 
-            cursor.execute('show slave hosts', dictionary=True)
-            result = cursor.fetchone()
-            if not result:
-                raise UnknownPrimary('no prior replication setup found')
-            return result['Master_id'], result['Host']
+        result = self.query('show slave hosts')
+        if not result:
+            raise UnknownPrimary('no prior replication setup found')
+        return result[0]['Master_id'], result[0]['Host']
 
     @debug(name='mysql.setup_replication')
     def setup_replication(self, primary_ip):

@@ -2,7 +2,7 @@
 import json
 import os
 import signal
-from manage.utils import debug, env, to_flag, log, UNASSIGNED, PRIMARY, REPLICA
+from manage.utils import debug, env, to_flag, log, UNASSIGNED
 
 # pylint: disable=invalid-name,no-self-use,dangerous-default-value
 
