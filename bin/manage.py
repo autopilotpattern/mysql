@@ -129,7 +129,8 @@ def health(node):
     # path is to check a lock file against the node state (which has been
     # set above) and immediately return when we discover the lock exists.
     # Otherwise, we bootstrap the instance for its *current* state.
-    assert_initialized_for_state(node)
+    if not assert_initialized_for_state(node):
+        return
 
     if node.is_primary():
         # If this lock is allowed to expire and the health check for the

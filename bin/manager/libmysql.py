@@ -280,14 +280,10 @@ class MySQL(object):
         output for a bulk insert with the Connector/MySQL client.
         """
         try:
-            # DEBUG
-            print(subprocess.check_output('ls /usr/bin'))
-            print(subprocess.check_output('ls /var/run'))
-
             subprocess.check_output(
                 '/usr/bin/mysql_tzinfo_to_sql /usr/share/zoneinfo | '
                 '/usr/bin/mysql -uroot --protocol=socket '
-                '--socket=/var/run/mysqld/mysql.sock')
+                '--socket=/var/run/mysqld/mysqld.sock')
         except (subprocess.CalledProcessError, OSError) as ex:
             log.error('mysql_tzinfo_to_sql returned error: %s', ex)
 
