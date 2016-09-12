@@ -53,8 +53,9 @@ RUN set -ex \
 
 # configure ContainerPilot and MySQL
 COPY etc/* /etc/
-COPY bin/manage /usr/local/bin/manage
+COPY bin/manager /usr/local/bin/manager
 COPY bin/test.py /usr/local/bin/test.py
+COPY bin/manage.py /usr/local/bin/manage.py
 
 # override the parent entrypoint
 ENTRYPOINT []

@@ -124,7 +124,8 @@ test-local-docker:
 unit-test:
 	docker run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
-		-v $(shell pwd)/bin/manage:/usr/local/bin/manage \
+		-v $(shell pwd)/bin/manager:/usr/local/bin/manager \
+		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
 		autopilotpattern/mysql:$(TAG) \
 		python test.py
