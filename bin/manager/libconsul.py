@@ -2,7 +2,7 @@
 import os
 import time
 
-from manage.utils import debug, env, to_flag, \
+from manager.utils import debug, env, to_flag, \
     WaitTimeoutError, UnknownPrimary, PRIMARY_KEY, LAST_BACKUP_KEY
 
 # pylint: disable=import-error,invalid-name,dangerous-default-value
@@ -42,10 +42,10 @@ class Consul(object):
         self.client.kv.put(key, value)
 
     def register_check(self, key, ttl):
-        """ Registers a new heal"""
+        """ Registers a new health check """
         self.client.agent.check.register(
             name=key,
-            check=self.client.Check.ttl(ttl),
+            check=pyconsul.Check.ttl(ttl),
             check_id=key
         )
 

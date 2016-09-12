@@ -7,7 +7,7 @@ import socket
 import subprocess
 import string
 import time
-from manage.utils import debug, env, log, get_ip, to_flag, \
+from manager.utils import debug, env, log, get_ip, to_flag, \
     WaitTimeoutError, UnknownPrimary
 
 # pylint: disable=import-error,no-self-use,invalid-name,dangerous-default-value
@@ -25,7 +25,7 @@ class MySQL(object):
         self.mysql_password = env('MYSQL_PASSWORD', None, envs)
         self.mysql_root_password = env('MYSQL_ROOT_PASSWORD', '', envs)
         self.mysql_random_root_password = env('MYSQL_RANDOM_ROOT_PASSWORD',
-                                              False, envs, to_flag)
+                                              True, envs, to_flag)
         self.mysql_onetime_password = env('MYSQL_ONETIME_PASSWORD',
                                           False, envs, to_flag)
         self.repl_user = env('MYSQL_REPL_USER', None, envs)
@@ -86,7 +86,7 @@ class MySQL(object):
 
     @debug(name='mysql.wait_for_connection')
     def wait_for_connection(self, user='root', password=None, database=None,
-                            timeout=30):
+                            timeout=10):
         """
         Polls mysqld socket until we get a connection or the timeout
         expires (raise WaitTimeoutError). Defaults to root empty/password.
@@ -114,7 +114,7 @@ class MySQL(object):
     def execute(self, sql, params=(), conn=None):
         """ Execute and commit a SQL statement with parameters """
         self.add(sql, params)
-        self._execute(conn, results=False, commit=True)
+        self._execute(conn, discard_results=True)
 
     @debug(name='mysql.execute_many')
     def execute_many(self, conn=None):
@@ -122,34 +122,44 @@ class MySQL(object):
         Execute and commit all previously `add`ed statements
         in the query buffer
         """
-        self._execute(conn, results=False, commit=True)
+        self._execute(conn, discard_results=True)
 
     @debug(name='mysql.query')
-    def query(self, sql, params=(), conn=None, dictionary=True):
+    def query(self, sql, params=(), conn=None):
         """ Execute a SQL query with params and return results. """
         self.add(sql, params)
-        return self._execute(conn=conn, results=True, commit=False,
-                             dictionary=True)
+        return self._execute(conn=conn)
 
-    def _execute(self, conn=None, results=False, commit=True, dictionary=True):
+    def _execute(self, conn=None, discard_results=False):
         """
         Execute and commit all composed statements and flushes the buffer
         """
         try:
             if not conn:
                 conn = self.conn
-            cur = conn.cursor()
+        except (WaitTimeoutError, MySQLError):
+            raise # unrecoverable
+
+        try:
+            cur = conn.cursor(dictionary=True, buffered=True)
             for stmt, params in self._query_buffer.items():
                 log.debug(stmt)
                 log.debug(params)
-                cur.execute(stmt, params=params, dictionary=True)
-            if commit:
+                cur.execute(stmt, params=params)
+                if not discard_results:
+                    return cur.fetchall()
+
+                # we discard results from writes
                 conn.commit()
-            if results:
-                return cur.fetchall()
-        except MySQLError:
-            raise # this is an unrecoverable situation
+                try:
+                    cur.fetchall()
+                except MySQLError:
+                    # Will get "InternalError: No result set to fetch from."
+                    # for SET statements. We can safely let this slide if the
+                    # `execute` call passes
+                    pass
         finally:
+            # exceptions are an unrecoverable situation
             self._query_buffer.clear()
             cur.close()
 
@@ -270,12 +280,16 @@ class MySQL(object):
         output for a bulk insert with the Connector/MySQL client.
         """
         try:
+            # DEBUG
+            print(subprocess.check_output('ls /usr/bin'))
+            print(subprocess.check_output('ls /var/run'))
+
             subprocess.check_output(
                 '/usr/bin/mysql_tzinfo_to_sql /usr/share/zoneinfo | '
                 '/usr/bin/mysql -uroot --protocol=socket '
                 '--socket=/var/run/mysqld/mysql.sock')
-        except (subprocess.CalledProcessError, OSError):
-            log.error('mysql_tzinfo_to_sql returned error.')
+        except (subprocess.CalledProcessError, OSError) as ex:
+            log.error('mysql_tzinfo_to_sql returned error: %s', ex)
 
     def restore_from_snapshot(self, filename):
         """

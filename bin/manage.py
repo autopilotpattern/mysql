@@ -9,13 +9,13 @@ import sys
 import time
 
 # pylint: disable=invalid-name,no-self-use,dangerous-default-value
-from manage.containerpilot import ContainerPilot
-from manage.libconsul import Consul
-from manage.libmanta import Manta
-from manage.libmysql import MySQL, MySQLError
-from manage.utils import \
+from manager.containerpilot import ContainerPilot
+from manager.libconsul import Consul
+from manager.libmanta import Manta
+from manager.libmysql import MySQL, MySQLError
+from manager.utils import \
     log, get_ip, debug, \
-    UnknownPrimary, \
+    UnknownPrimary, WaitTimeoutError, \
     PRIMARY, REPLICA, UNASSIGNED, \
     PRIMARY_KEY, BACKUP_TTL_KEY, LAST_BINLOG_KEY, BACKUP_TTL, \
     BACKUP_NAME, LAST_BACKUP_KEY
@@ -61,7 +61,7 @@ class Node(object):
             else:
                 self.cp.state = REPLICA
                 return False
-        except (MySQLError, UnknownPrimary) as ex:
+        except (MySQLError, WaitTimeoutError, UnknownPrimary) as ex:
             log.debug('could not determine primary via mysqld status: %s', ex)
 
         try:
@@ -248,16 +248,17 @@ def snapshot_task(node):
         except IOError:
             return True
         finally:
-            backup_lock.close()
+            if backup_lock:
+                backup_lock.close()
 
     @debug
     def is_binlog_stale(node):
         """ Compare current binlog to that recorded w/ Consul """
-        results = node.mysql.query('SHOW MASTER STATUS')
+        results = node.mysql.query('show master status')
         try:
-            binlog_file = results[0][0]
+            binlog_file = results[0]['File']
             last_binlog_file = node.consul.get(LAST_BINLOG_KEY)
-        except IndexError:
+        except (IndexError, KeyError):
             return True
         return binlog_file != last_binlog_file
 
@@ -326,9 +327,9 @@ def create_snapshot(node):
 
         # write the filename of the binlog to Consul so that we know if
         # we've rotated since the last backup.
-        # query lets IndexError bubble up -- something's broken
-        results = node.mysql.query('SHOW MASTER STATUS')
-        binlog_file = results[0][0]
+        # query lets KeyError bubble up -- something's broken
+        results = node.mysql.query('show master status')
+        binlog_file = results[0]['File']
         log.debug('setting LAST_BINLOG_KEY in Consul')
         node.consul.put(LAST_BINLOG_KEY, binlog_file)
 
@@ -338,7 +339,8 @@ def create_snapshot(node):
         log.debug('unlocking backup lock')
         fcntl.flock(backup_lock, fcntl.LOCK_UN)
         log.debug('closing backup file')
-        backup_lock.close()
+        if backup_lock:
+            backup_lock.close()
 
 
 @debug
@@ -388,9 +390,9 @@ def assert_initialized_for_state(node):
             # but should be safe to retry if we can make more progress. At
             # worst we end up with a bunch of failure logs.
             log.error('Failed to set up %s as primary (%s). Exiting but will '
-                      'retry setup. Check logs following this line to see if  '
+                      'retry setup. Check logs following this line to see if '
                       'setup needs reconfiguration or manual intervention to '
-                      'continue.')
+                      'continue.', node.name, ex)
             os.rmdir(LOCK_PATH)
             sys.exit(1)
         if node.cp.update():
@@ -459,13 +461,13 @@ def main():
     parameters containing the state of MySQL, ContainerPilot, etc.
     Default behavior is to run `pre_start` DB initialization.
     """
-    if len(sys.argv) == 0:
+    if len(sys.argv) == 1:
         consul = Consul(envs={'CONSUL': os.environ.get('CONSUL', 'consul')})
         cmd = pre_start
     else:
         consul = Consul()
         try:
-            cmd = locals()[sys.argv[1]]
+            cmd = globals()[sys.argv[1]]
         except KeyError:
             log.error('Invalid command: %s', sys.argv[1])
             sys.exit(1)

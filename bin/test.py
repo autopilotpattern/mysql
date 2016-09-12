@@ -1,4 +1,6 @@
+import fcntl
 import json
+import logging
 import os
 import tempfile
 import unittest
@@ -8,17 +10,18 @@ import consul as pyconsul
 import mock
 
 import manage
-from manage.containerpilot import ContainerPilot
-from manage.libconsul import Consul
-from manage.libmanta import Manta
-from manage.libmysql import MySQL
-from manage.utils import *
+from manager.containerpilot import ContainerPilot
+from manager.libconsul import Consul
+from manager.libmanta import Manta
+from manager.libmysql import MySQL
+from manager.utils import *
 
 
 class TestPreStart(unittest.TestCase):
 
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
+        logging.getLogger('manager').setLevel(logging.WARN)
         consul = mock.MagicMock()
         manta = mock.MagicMock()
         my = mock.MagicMock()
@@ -27,6 +30,7 @@ class TestPreStart(unittest.TestCase):
 
     def tearDown(self):
         logging.getLogger('manage').setLevel(logging.DEBUG)
+        logging.getLogger('manager').setLevel(logging.DEBUG)
 
     def test_pre_start_first_node(self):
         """
@@ -88,6 +92,7 @@ class TestHealth(unittest.TestCase):
 
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
+        logging.getLogger('manager').setLevel(logging.WARN)
         consul = mock.MagicMock()
         my = mock.MagicMock()
         cp = ContainerPilot()
@@ -96,10 +101,11 @@ class TestHealth(unittest.TestCase):
         cp.path = temp_file.name
         my.datadir = tempfile.mkdtemp()
         self.node = manage.Node(consul=consul, cp=cp, mysql=my,
-                                ip='192.168.1.101', name='node1')
+                                 ip='192.168.1.101', name='node1')
 
     def tearDown(self):
         logging.getLogger('manage').setLevel(logging.DEBUG)
+        logging.getLogger('manager').setLevel(logging.DEBUG)
         try:
             os.rmdir(self.LOCK_PATH)
         except:
@@ -334,6 +340,7 @@ class TestOnChange(unittest.TestCase):
 
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
+        logging.getLogger('manager').setLevel(logging.WARN)
         consul = mock.MagicMock()
         my = mock.MagicMock()
         cp = ContainerPilot()
@@ -347,6 +354,7 @@ class TestOnChange(unittest.TestCase):
 
     def tearDown(self):
         logging.getLogger('manage').setLevel(logging.DEBUG)
+        logging.getLogger('manager').setLevel(logging.DEBUG)
 
     def test_this_node_already_set_primary(self):
         """
@@ -564,6 +572,7 @@ class TestSnapshotTask(unittest.TestCase):
 
     def setUp(self):
         logging.getLogger('manage').setLevel(logging.WARN)
+        logging.getLogger('manager').setLevel(logging.WARN)
         consul = mock.MagicMock()
         manta = mock.MagicMock()
         my = mock.MagicMock()
@@ -592,7 +601,7 @@ class TestSnapshotTask(unittest.TestCase):
         """ Snapshot if the binlog is stale even if its not time to do so """
         self.node.consul.is_check_healthy.return_value = True
         self.node.consul.get.return_value = 'mybackup1'
-        self.node.mysql.query.return_value = [['mybackup2']]
+        self.node.mysql.query.return_value = [{'File':'mybackup2'}]
 
         with mock.patch('manage.write_snapshot') as ws:
             manage.snapshot_task(self.node)
@@ -604,7 +613,7 @@ class TestSnapshotTask(unittest.TestCase):
         """ Don't snapshot if there's already a snapshot running """
         self.node.consul.is_check_healthy.return_value = False
         self.node.consul.get.return_value = 'mybackup1'
-        self.node.mysql.query.return_value = [['mybackup2']]
+        self.node.mysql.query.return_value = [{'File':'mybackup2'}]
 
         with mock.patch('manage.write_snapshot') as ws:
             lockfile_name = '/tmp/mysql-backup-run'
@@ -621,7 +630,7 @@ class TestSnapshotTask(unittest.TestCase):
         """ Snapshot if the timer has elapsed even if the binlog isn't stale"""
         self.node.consul.is_check_healthy.return_value = False
         self.node.consul.get.return_value = 'mybackup1'
-        self.node.mysql.query.return_value = [['mybackup1']]
+        self.node.mysql.query.return_value = [{'File':'mybackup1'}]
         with mock.patch('manage.write_snapshot') as ws:
             manage.snapshot_task(self.node)
             self.assertTrue(ws.called)
@@ -658,9 +667,12 @@ class TestMySQL(unittest.TestCase):
         self.my.execute('query 2', ())
         self.assertEqual(len(self.my._query_buffer.items()), 0)
         exec_calls = [
-            mock.call.cursor().execute('query 1', dictionary=True, params=()),
-            mock.call.cursor().execute('query 2', dictionary=True, params=()),
+            mock.call.cursor().execute('query 1', params=()),
             mock.call.commit(),
+            mock.call.cursor().fetchall(),
+            mock.call.cursor().execute('query 2', params=()),
+            mock.call.commit(),
+            mock.call.cursor().fetchall(),
             mock.call.cursor().close()
         ]
         self.assertEqual(self.my._conn.mock_calls[2:], exec_calls)
@@ -672,10 +684,15 @@ class TestMySQL(unittest.TestCase):
         self.my.execute_many()
         self.assertEqual(len(self.my._query_buffer.items()), 0)
         exec_many_calls = [
-            mock.call.cursor().execute('query 3', dictionary=True, params=()),
-            mock.call.cursor().execute('query 4', dictionary=True, params=()),
-            mock.call.cursor().execute('query 5', dictionary=True, params=()),
+            mock.call.cursor().execute('query 3', params=()),
             mock.call.commit(),
+            mock.call.cursor().fetchall(),
+            mock.call.cursor().execute('query 4', params=()),
+            mock.call.commit(),
+            mock.call.cursor().fetchall(),
+            mock.call.cursor().execute('query 5', params=()),
+            mock.call.commit(),
+            mock.call.cursor().fetchall(),
             mock.call.cursor().close()
         ]
         self.assertEqual(self.my._conn.mock_calls[2:], exec_many_calls)
@@ -684,7 +701,7 @@ class TestMySQL(unittest.TestCase):
         self.my.query('query 6', ())
         self.assertEqual(len(self.my._query_buffer.items()), 0)
         query_calls = [
-            mock.call.cursor().execute('query 6', dictionary=True, params=()),
+            mock.call.cursor().execute('query 6', params=()),
             mock.call.cursor().fetchall(),
             mock.call.cursor().close()
         ]
