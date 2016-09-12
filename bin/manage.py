@@ -66,10 +66,10 @@ class Node(object):
 
         try:
             # am I already reporting I'm a healthy primary to Consul?
-            primary_node, _ = self.consul.get_primary()
-            if not primary_node:
+            _, primary_ip = self.consul.get_primary()
+            if not primary_ip:
                 pass
-            elif primary_node == self.name:
+            elif primary_ip == self.ip:
                 self.cp.state = PRIMARY
                 return True
             else:
@@ -129,8 +129,7 @@ def health(node):
     # path is to check a lock file against the node state (which has been
     # set above) and immediately return when we discover the lock exists.
     # Otherwise, we bootstrap the instance for its *current* state.
-    if not assert_initialized_for_state(node):
-        return
+    assert_initialized_for_state(node)
 
     if node.is_primary():
         # If this lock is allowed to expire and the health check for the
@@ -398,7 +397,11 @@ def assert_initialized_for_state(node):
             sys.exit(1)
         if node.cp.update():
             node.cp.reload()
-            return False # TODO unreachable?
+            # this is racy with the SIGHUP that ContainerPilot just got
+            # sent, but if the Consul agent shuts down quickly enough we
+            # end up sending extra API calls to it and get a bunch of log
+            # spam. This forces us to exit early.
+            sys.exit(0)
     else:
         try:
             run_as_replica(node)

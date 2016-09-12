@@ -126,7 +126,12 @@ class TestHealth(unittest.TestCase):
         manage.write_snapshot = mock.MagicMock(return_value=True)
         self.node.consul.client.health.service.return_value = ()
 
-        manage.health(self.node)
+        try:
+            manage.health(self.node)
+            self.fail('Should have exited but did not.')
+        except SystemExit:
+            pass
+
         calls = [
             mock.call.setup_root_user(True),
             mock.call.create_db(True),
