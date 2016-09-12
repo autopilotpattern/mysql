@@ -124,7 +124,7 @@ class MySQL(object):
         """
         self._execute(conn, discard_results=True)
 
-    @debug(name='mysql.query')
+    @debug(name='mysql.query', log_output=True)
     def query(self, sql, params=(), conn=None):
         """ Execute a SQL query with params and return results. """
         self.add(sql, params)
@@ -143,8 +143,7 @@ class MySQL(object):
         try:
             cur = conn.cursor(dictionary=True, buffered=True)
             for stmt, params in self._query_buffer.items():
-                log.debug(stmt)
-                log.debug(params)
+                log.debug('%s %s', stmt, params)
                 cur.execute(stmt, params=params)
                 if not discard_results:
                     return cur.fetchall()
@@ -312,7 +311,7 @@ class MySQL(object):
         result = self.query('show slave hosts')
         if not result:
             raise UnknownPrimary('no prior replication setup found')
-        return result[0]['Master_id'], result[0]['Host']
+        return result[0]['Master_id'], self.ip
 
     @debug(name='mysql.setup_replication')
     def setup_replication(self, primary_ip):

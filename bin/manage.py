@@ -75,7 +75,7 @@ class Node(object):
             else:
                 self.cp.state = REPLICA
                 return False
-        except UnknownPrimary as ex:
+        except (UnknownPrimary, ValueError) as ex:
             log.debug('could not determine primary via Consul: %s', ex)
 
         self.cp.state = UNASSIGNED
