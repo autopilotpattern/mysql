@@ -24,7 +24,7 @@
     {
       "name": "snapshot_check",
       "command": "python /usr/local/bin/manage.py snapshot_task",
-      "frequency": "10s",
+      "frequency": "5m",
       "timeout": "10m"
     }
   ],
