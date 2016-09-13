@@ -6,7 +6,6 @@ import os
 import socket
 import subprocess
 import sys
-import time
 
 # pylint: disable=invalid-name,no-self-use,dangerous-default-value
 from manager.containerpilot import ContainerPilot
@@ -158,6 +157,7 @@ def health(node):
         log.error('Cannot determine MySQL state; failing health check.')
         sys.exit(1)
 
+    node.consul.unlock_failover()
 
 
 @debug
@@ -182,42 +182,40 @@ def on_change(node):
         node.consul.get_primary(timeout=1)
         log.debug('[on_change] primary is already healthy, no failover required')
         return
-    except UnknownPrimary:
-        pass
+    except (UnknownPrimary, WaitTimeoutError) as ex:
+        log.debug('[on_change] no primary from consul: %s', ex)
 
-    _key = 'FAILOVER_IN_PROGRESS'
-    session_id = node.consul.create_session(_key, ttl=120)
-    if node.consul.lock(_key, node.hostname, session_id):
+    if node.consul.lock_failover(node.name):
         try:
             nodes = node.consul.client.health.service(REPLICA, passing=True)[1]
             ips = [instance['Service']['Address'] for instance in nodes]
             log.info('[on_change] Executing failover with candidates: %s', ips)
             node.mysql.failover(ips)
-        finally:
-            # ConsulError, subprocess.CalledProcessError will
-            # just bubble up and return a non-zero exit code. In this
-            # case either another instance that didn't overlap in time
-            # will complete failover or we'll be left w/o a primary and
-            # require manual intervention via `mysqlrpladmin failover`
-            # TODO: can/should we try to recover from this state?
-            node.consul.unlock(_key, session_id)
+        except Exception:
+            # On failure we bubble-up the exception and fail the onChange.
+            # Either another instance that didn't overlap in time will
+            # complete failover or we'll be left w/o a primary and require
+            # manual intervention via `mysqlrpladmin failover`
+            node.consul.unlock_failover()
+            raise
     else:
         log.info('[on_change] Failover in progress on another node, '
                  'waiting to complete.')
-        while True:
-            if not node.consul.is_locked(_key):
-                break
-            time.sleep(3)
+        node.consul.wait_for_failover_lock()
 
     # need to determine replicaton status at this point, so make
     # sure we refresh .state from mysqld/Consul
     node.cp.state = UNASSIGNED
     if node.is_primary():
+        log.info('[on_change] node %s is primary after failover', node.hostname)
         if node.cp.update():
-            # we're ignoring the lock here intentionally
-            node.consul.put(PRIMARY_KEY, node.hostname)
+            # we're intentionally ignoring the advisory lock here
+            ok = node.consul.put(PRIMARY_KEY, node.hostname)
+            log.debug('[on_change] %s obtained lock: %s', node.hostname, ok)
             node.cp.reload()
         return
+    elif node.is_replica():
+        log.info('[on_change] node %s is replica after failover', node.hostname)
 
     if node.cp.state == UNASSIGNED:
         log.error('[on_change] this node is neither primary or replica '

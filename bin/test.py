@@ -188,7 +188,9 @@ class TestHealth(unittest.TestCase):
         self.node.consul.client = mock.MagicMock()
         self.node.consul.renew_session = mock.MagicMock()
         self.node.consul.client.health.service.return_value = []
+
         try:
+            logging.getLogger().setLevel(logging.CRITICAL) # noisy
             manage.health(self.node)
             self.fail('Should have exited but did not.')
         except SystemExit:
@@ -237,6 +239,7 @@ class TestHealth(unittest.TestCase):
             }]]
 
         try:
+            logging.getLogger().setLevel(logging.CRITICAL) # noisy
             manage.health(self.node)
             self.fail('Should have exited but did not.')
         except SystemExit:
@@ -300,6 +303,7 @@ class TestHealth(unittest.TestCase):
             'Service' : {'ID': 'node2', 'Address': '192.168.1.102'},
             }]]
         try:
+            logging.getLogger().setLevel(logging.CRITICAL) # noisy
             manage.health(self.node)
             self.fail('Should have exited but did not.')
         except SystemExit:
@@ -327,6 +331,7 @@ class TestHealth(unittest.TestCase):
         self.node.consul.mark_as_primary = mock.MagicMock(return_value=False)
         self.node.consul.client.health.service.return_value = ()
         try:
+            logging.getLogger().setLevel(logging.CRITICAL) # noisy
             manage.health(self.node)
             self.fail('Should have exited but did not.')
         except SystemExit:
@@ -337,7 +342,6 @@ class TestHealth(unittest.TestCase):
 
 
 class TestOnChange(unittest.TestCase):
-
 
     def setUp(self):
         logging.getLogger().setLevel(logging.WARN)
@@ -412,9 +416,9 @@ class TestOnChange(unittest.TestCase):
         manage.on_change(self.node)
 
         self.assertEqual(self.node.consul.get_primary.call_count, 2)
-        self.node.consul.lock.assert_called_once()
+        self.node.consul.lock_failover.assert_called_once()
         self.node.consul.client.health.service.assert_called_once()
-        self.node.consul.unlock.assert_called_once()
+        self.assertFalse(self.node.consul.unlock_failover.called)
         self.node.consul.put.assert_called_once()
         self.node.cp.reload.assert_called_once()
         self.assertEqual(self.node.cp.state, PRIMARY)
@@ -440,7 +444,7 @@ class TestOnChange(unittest.TestCase):
             yield ('node1', '192.168.1.102')
 
         self.node.consul.get_primary.side_effect = consul_get_primary_results()
-        self.node.consul.lock.return_value = True
+        self.node.consul.lock_failover.return_value = True
         self.node.consul.client.health.service.return_value = [0, [
             {'Service' : {'ID': 'node1', 'Address': '192.168.1.101'}},
             {'Service' : {'ID': 'node3', 'Address': '192.168.1.102'}}
@@ -449,9 +453,9 @@ class TestOnChange(unittest.TestCase):
         manage.on_change(self.node)
 
         self.assertEqual(self.node.consul.get_primary.call_count, 2)
-        self.node.consul.lock.assert_called_once()
+        self.node.consul.lock_failover.assert_called_once()
         self.node.consul.client.health.service.assert_called_once()
-        self.node.consul.unlock.assert_called_once()
+        self.assertFalse(self.node.consul.unlock_failover.called)
         self.assertFalse(self.node.cp.reload.called)
         self.assertEqual(self.node.cp.state, REPLICA)
 
@@ -467,7 +471,7 @@ class TestOnChange(unittest.TestCase):
         self.node.mysql.failover = mock.MagicMock(side_effect=Exception('fail'))
 
         self.node.consul.get_primary.side_effect = UnknownPrimary()
-        self.node.consul.lock.return_value = True
+        self.node.consul.lock_failover.return_value = True
         self.node.consul.client.health.service.return_value = [0, [
             {'Service' : {'ID': 'node1', 'Address': '192.168.1.101'}},
             {'Service' : {'ID': 'node3', 'Address': '192.168.1.102'}}
@@ -480,9 +484,9 @@ class TestOnChange(unittest.TestCase):
             pass
 
         self.assertEqual(self.node.consul.get_primary.call_count, 2)
-        self.node.consul.lock.assert_called_once()
+        self.node.consul.lock_failover.assert_called_once()
         self.node.consul.client.health.service.assert_called_once()
-        self.node.consul.unlock.assert_called_once()
+        self.node.consul.unlock_failover.assert_called_once()
         self.assertFalse(self.node.cp.reload.called)
         self.assertEqual(self.node.cp.state, UNASSIGNED)
 
@@ -512,16 +516,22 @@ class TestOnChange(unittest.TestCase):
             yield True
             yield False
 
-        self.node.consul.get_primary.side_effect = consul_get_primary_results()
-        self.node.consul.lock.return_value = False
-        self.node.consul.is_locked.side_effect = lock_sequence()
+        self.node.consul = Consul(envs=get_environ())
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.put = mock.MagicMock()
+        self.node.consul.get_primary = mock.MagicMock(
+            side_effect=consul_get_primary_results())
+        self.node.consul.lock_failover = mock.MagicMock(return_value=False)
+        self.node.consul.unlock_failover = mock.MagicMock()
+        self.node.consul.is_locked = mock.MagicMock(side_effect=lock_sequence())
 
-        manage.on_change(self.node)
+        with mock.patch('time.sleep'): # cuts 3 sec from test run
+            manage.on_change(self.node)
 
         self.assertEqual(self.node.consul.get_primary.call_count, 2)
-        self.node.consul.lock.assert_called_once()
+        self.node.consul.lock_failover.assert_called_once()
         self.assertFalse(self.node.consul.client.health.service.called)
-        self.node.consul.unlock.assert_called_once()
+        self.assertFalse(self.node.consul.unlock_failover.called)
         self.node.consul.put.assert_called_once()
         self.node.cp.reload.assert_called_once()
         self.assertEqual(self.node.cp.state, PRIMARY)
@@ -552,16 +562,22 @@ class TestOnChange(unittest.TestCase):
             yield True
             yield False
 
-        self.node.consul.get_primary.side_effect = consul_get_primary_results()
-        self.node.consul.lock.return_value = False
-        self.node.consul.is_locked.side_effect = lock_sequence()
+        self.node.consul = Consul(envs=get_environ())
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.put = mock.MagicMock()
+        self.node.consul.get_primary = mock.MagicMock(
+            side_effect=consul_get_primary_results())
+        self.node.consul.lock_failover = mock.MagicMock(return_value=False)
+        self.node.consul.unlock_failover = mock.MagicMock()
+        self.node.consul.is_locked = mock.MagicMock(side_effect=lock_sequence())
 
-        manage.on_change(self.node)
+        with mock.patch('time.sleep'): # cuts 3 sec from test run
+            manage.on_change(self.node)
 
         self.assertEqual(self.node.consul.get_primary.call_count, 2)
-        self.node.consul.lock.assert_called_once()
+        self.node.consul.lock_failover.assert_called_once()
         self.assertFalse(self.node.consul.client.health.service.called)
-        self.node.consul.unlock.assert_called_once()
+        self.assertFalse(self.node.consul.unlock_failover.called)
         self.assertFalse(self.node.consul.put.called)
         self.assertFalse(self.node.cp.reload.called)
         self.assertEqual(self.node.cp.state, REPLICA)

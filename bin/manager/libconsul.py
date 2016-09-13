@@ -11,6 +11,9 @@ import consul as pyconsul
 SESSION_CACHE_FILE = env('SESSION_CACHE_FILE', '/tmp/mysql-session')
 SESSION_NAME = env('SESSION_NAME', 'mysql-primary-lock')
 SESSION_TTL = env('SESSION_TTL', 25, fn=int)
+FAILOVER_KEY = env('FAILOVER_IN_PROGRESS', 'FAILOVER_IN_PROGRESS')
+FAILOVER_SESSION_FILE = env('FAILOVER_SESSION_FILE', '/tmp/failover-session')
+
 
 class Consul(object):
     """ Consul represents the Consul instance this node talks to """
@@ -64,7 +67,8 @@ class Consul(object):
             return False
 
     @debug(log_output=True)
-    def get_session(self, cached=True):
+    def get_session(self, key=SESSION_NAME, ttl=SESSION_TTL,
+                    on_disk=SESSION_CACHE_FILE, cached=True):
         """
         Gets a Consul session ID from the on-disk cache or calls into
         `create_session` to generate a new one.
@@ -74,14 +78,14 @@ class Consul(object):
         Returns the session ID.
         """
         if not cached:
-            return self.create_session(SESSION_NAME, SESSION_TTL)
+            return self.create_session(key, ttl)
         try:
-            with open(SESSION_CACHE_FILE, 'r') as f:
+            with open(on_disk, 'r') as f:
                 session_id = f.read()
         except IOError:
-            session_id = self.create_session(SESSION_NAME, SESSION_TTL)
+            session_id = self.create_session(key, ttl)
         if cached:
-            with open(SESSION_CACHE_FILE, 'w') as f:
+            with open(on_disk, 'w') as f:
                 f.write(session_id)
 
         return session_id
@@ -162,11 +166,13 @@ class Consul(object):
         while timeout > 0:
             try:
                 nodes = self.client.health.service(PRIMARY_KEY, passing=True)[1]
+                log.debug(nodes)
                 instances = [service['Service'] for service in nodes]
                 if len(instances) > 1:
                     raise UnknownPrimary('Multiple primaries detected! %s', instances)
                 return instances[0]['ID'], instances[0]['Address']
-            except pyconsul.ConsulException:
+            except pyconsul.ConsulException as ex:
+                log.debug(ex)
                 timeout = timeout - 1
                 time.sleep(1)
             except (IndexError, KeyError):
@@ -180,3 +186,46 @@ class Consul(object):
         if not self.lock(PRIMARY_KEY, name, session_id):
             return False
         return session_id
+
+    @debug
+    def lock_failover(self, hostname):
+        """
+        Lock a session in Consul for the failover and cache the
+        session as a file on disk.
+        """
+        session_id = self.get_session(FAILOVER_KEY, ttl=120,
+                                      on_disk=FAILOVER_SESSION_FILE)
+        return self.lock(FAILOVER_KEY, hostname, session_id)
+
+    @debug
+    def wait_for_failover_lock(self):
+        """
+        Block forever waiting on the session lock on the
+        failover to complete.
+        """
+        while True:
+            if not self.is_locked(FAILOVER_KEY):
+                break
+            time.sleep(3)
+
+    @debug
+    def unlock_failover(self):
+        """
+        If we've previously locked a session for failover and a new
+        primary has registered as healthy, unlock the session and
+        remove the session file.
+        """
+        try:
+            with open(FAILOVER_SESSION_FILE, 'r') as f:
+                session_id = f.read()
+                if self.get_primary():
+                    self.unlock(FAILOVER_KEY, session_id)
+                    os.remove(FAILOVER_SESSION_FILE)
+        except (IOError, OSError):
+            # we don't have a session file so just move on
+            pass
+        except (UnknownPrimary, WaitTimeoutError):
+            # the primary isn't ready yet so we'll try
+            # to unlock again on the next pass
+            log.debug('failover session lock (%s) not removed because '
+                      'primary has not reported as healthy', session_id)
