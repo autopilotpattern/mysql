@@ -39,7 +39,7 @@ class Node(object):
         self.name = name if name else 'mysql-{}'.format(self.hostname)
         self.ip = ip if ip else get_ip()
 
-    @debug(name='node.is_primary', log_output=True)
+    @debug(log_output=True)
     def is_primary(self):
         """
         Check if this node is the primary by checking in-memory cache,

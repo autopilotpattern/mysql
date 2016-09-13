@@ -84,7 +84,7 @@ class MySQL(object):
         self._conn = self.wait_for_connection(**ctx)
         return self._conn
 
-    @debug(name='mysql.wait_for_connection')
+    @debug()
     def wait_for_connection(self, user='root', password=None, database=None,
                             timeout=10):
         """
@@ -110,13 +110,13 @@ class MySQL(object):
         """ Adds a new SQL statement to an internal query buffer """
         self._query_buffer[stmt] = params
 
-    @debug(name='mysql.execute')
+    @debug()
     def execute(self, sql, params=(), conn=None):
         """ Execute and commit a SQL statement with parameters """
         self.add(sql, params)
         self._execute(conn, discard_results=True)
 
-    @debug(name='mysql.execute_many')
+    @debug()
     def execute_many(self, conn=None):
         """
         Execute and commit all previously `add`ed statements
@@ -124,7 +124,7 @@ class MySQL(object):
         """
         self._execute(conn, discard_results=True)
 
-    @debug(name='mysql.query', log_output=True)
+    @debug(log_output=True)
     def query(self, sql, params=(), conn=None):
         """ Execute a SQL query with params and return results. """
         self.add(sql, params)
@@ -162,7 +162,7 @@ class MySQL(object):
             self._query_buffer.clear()
             cur.close()
 
-    @debug(name='mysql.initialize_db', log_output=True)
+    @debug(log_output=True)
     def initialize_db(self):
         """
         post-installation run to set up data directories
@@ -299,7 +299,7 @@ class MySQL(object):
                                '/tmp/backup'])
         self.take_ownership()
 
-    @debug(name='mysql.get_primary')
+    @debug(log_output=True)
     def get_primary(self):
         """
         Returns the server-id and hostname of the primary as known to MySQL
@@ -313,7 +313,7 @@ class MySQL(object):
             raise UnknownPrimary('no prior replication setup found')
         return result[0]['Master_id'], self.ip
 
-    @debug(name='mysql.setup_replication')
+    @debug()
     def setup_replication(self, primary_ip):
         """
         Set up GTID-based replication to the primary; once this is set the
@@ -332,7 +332,7 @@ class MySQL(object):
         self.add('START SLAVE;')
         self.execute_many()
 
-    @debug(name='mysql.failover')
+    @debug()
     def failover(self, ips):
         """
         Call external `mysqlrpladmin failover`. This will determine

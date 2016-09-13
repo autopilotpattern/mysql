@@ -50,7 +50,7 @@ class ContainerPilot(object):
 
         self.config = config
 
-    @debug(name='ContainerPilot.update', log_output=True)
+    @debug(log_output=True)
     def update(self):
         """
         Update the on-disk config file if it is stale. Returns a
@@ -64,7 +64,7 @@ class ContainerPilot(object):
             return True
         return False
 
-    @debug(name='ContainerPilot.render')
+    @debug
     def _render(self):
         """ Writes the current config to file. """
         new_config = json.dumps(self.config)

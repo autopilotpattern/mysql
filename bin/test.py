@@ -20,8 +20,7 @@ from manager.utils import *
 class TestPreStart(unittest.TestCase):
 
     def setUp(self):
-        logging.getLogger('manage').setLevel(logging.WARN)
-        logging.getLogger('manager').setLevel(logging.WARN)
+        logging.getLogger().setLevel(logging.WARN)
         consul = mock.MagicMock()
         manta = mock.MagicMock()
         my = mock.MagicMock()
@@ -29,8 +28,7 @@ class TestPreStart(unittest.TestCase):
         self.node = manage.Node(consul=consul, manta=manta, mysql=my)
 
     def tearDown(self):
-        logging.getLogger('manage').setLevel(logging.DEBUG)
-        logging.getLogger('manager').setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
 
     def test_pre_start_first_node(self):
         """
@@ -91,8 +89,7 @@ class TestHealth(unittest.TestCase):
     LOCK_PATH = '/var/run/init.lock'
 
     def setUp(self):
-        logging.getLogger('manage').setLevel(logging.WARN)
-        logging.getLogger('manager').setLevel(logging.WARN)
+        logging.getLogger().setLevel(logging.WARN)
         consul = mock.MagicMock()
         my = mock.MagicMock()
         cp = ContainerPilot()
@@ -101,11 +98,10 @@ class TestHealth(unittest.TestCase):
         cp.path = temp_file.name
         my.datadir = tempfile.mkdtemp()
         self.node = manage.Node(consul=consul, cp=cp, mysql=my,
-                                 ip='192.168.1.101', name='node1')
+                                ip='192.168.1.101', name='node1')
 
     def tearDown(self):
-        logging.getLogger('manage').setLevel(logging.DEBUG)
-        logging.getLogger('manager').setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
         try:
             os.rmdir(self.LOCK_PATH)
         except:
@@ -344,8 +340,7 @@ class TestOnChange(unittest.TestCase):
 
 
     def setUp(self):
-        logging.getLogger('manage').setLevel(logging.WARN)
-        logging.getLogger('manager').setLevel(logging.WARN)
+        logging.getLogger().setLevel(logging.WARN)
         consul = mock.MagicMock()
         my = mock.MagicMock()
         cp = ContainerPilot()
@@ -358,8 +353,7 @@ class TestOnChange(unittest.TestCase):
                                 ip='192.168.1.101', name='node1')
 
     def tearDown(self):
-        logging.getLogger('manage').setLevel(logging.DEBUG)
-        logging.getLogger('manager').setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
 
     def test_this_node_already_set_primary(self):
         """
@@ -527,7 +521,7 @@ class TestOnChange(unittest.TestCase):
         self.assertEqual(self.node.consul.get_primary.call_count, 2)
         self.node.consul.lock.assert_called_once()
         self.assertFalse(self.node.consul.client.health.service.called)
-        self.assertFalse(self.node.consul.unlock.called)
+        self.node.consul.unlock.assert_called_once()
         self.node.consul.put.assert_called_once()
         self.node.cp.reload.assert_called_once()
         self.assertEqual(self.node.cp.state, PRIMARY)
@@ -567,7 +561,7 @@ class TestOnChange(unittest.TestCase):
         self.assertEqual(self.node.consul.get_primary.call_count, 2)
         self.node.consul.lock.assert_called_once()
         self.assertFalse(self.node.consul.client.health.service.called)
-        self.assertFalse(self.node.consul.unlock.called)
+        self.node.consul.unlock.assert_called_once()
         self.assertFalse(self.node.consul.put.called)
         self.assertFalse(self.node.cp.reload.called)
         self.assertEqual(self.node.cp.state, REPLICA)
@@ -576,8 +570,7 @@ class TestOnChange(unittest.TestCase):
 class TestSnapshotTask(unittest.TestCase):
 
     def setUp(self):
-        logging.getLogger('manage').setLevel(logging.WARN)
-        logging.getLogger('manager').setLevel(logging.WARN)
+        logging.getLogger().setLevel(logging.WARN)
         consul = mock.MagicMock()
         manta = mock.MagicMock()
         my = mock.MagicMock()
@@ -589,7 +582,7 @@ class TestSnapshotTask(unittest.TestCase):
         self.node = manage.Node(consul=consul, cp=cp, manta=manta, mysql=my)
 
     def tearDown(self):
-        logging.getLogger('manage').setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
         try:
             os.remove('/tmp/mysql-backup-run')
         except OSError:
@@ -644,13 +637,13 @@ class TestSnapshotTask(unittest.TestCase):
 class TestMySQL(unittest.TestCase):
 
     def setUp(self):
-        logging.getLogger('manage').setLevel(logging.WARN)
+        logging.getLogger().setLevel(logging.WARN)
         self.environ = get_environ()
         self.my = MySQL(self.environ)
         self.my._conn = mock.MagicMock()
 
     def tearDown(self):
-        logging.getLogger('manage').setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
 
     def test_parse(self):
         self.assertEqual(self.my.mysql_db, 'test_mydb')
@@ -766,11 +759,11 @@ class TestConsul(unittest.TestCase):
 class TestContainerPilotConfig(unittest.TestCase):
 
     def setUp(self):
-        logging.getLogger('manage').setLevel(logging.WARN)
+        logging.getLogger().setLevel(logging.WARN)
         self.environ = get_environ()
 
     def tearDown(self):
-        logging.getLogger('manage').setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
 
     def test_parse_with_consul_agent(self):
         self.environ['CONSUL_AGENT'] = '1'

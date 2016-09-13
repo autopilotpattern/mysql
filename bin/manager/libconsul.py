@@ -2,7 +2,7 @@
 import os
 import time
 
-from manager.utils import debug, env, to_flag, \
+from manager.utils import debug, env, log, to_flag, \
     WaitTimeoutError, UnknownPrimary, PRIMARY_KEY, LAST_BACKUP_KEY
 
 # pylint: disable=import-error,invalid-name,dangerous-default-value
@@ -39,7 +39,7 @@ class Consul(object):
 
     def put(self, key, value):
         """ Puts a value for the key; allows all exceptions to bubble up """
-        self.client.kv.put(key, value)
+        return self.client.kv.put(key, value)
 
     def register_check(self, key, ttl):
         """ Registers a new health check """
@@ -63,7 +63,7 @@ class Consul(object):
         except KeyError:
             return False
 
-    @debug(name='consul.get_session', log_output=True)
+    @debug(log_output=True)
     def get_session(self, cached=True):
         """
         Gets a Consul session ID from the on-disk cache or calls into
@@ -86,31 +86,31 @@ class Consul(object):
 
         return session_id
 
-    @debug(name='consul.create_session', log_output=True)
+    @debug(log_output=True)
     def create_session(self, key, ttl=120):
         """ Create a session on Consul and return the session ID """
         return self.client.session.create(name=key,
                                           behavior='release',
                                           ttl=ttl)
 
-    @debug(name='consul.renew_session', log_output=True)
+    @debug(log_output=True)
     def renew_session(self, session_id=None):
         """ Renews the session TTL on Consul """
         if not session_id:
             session_id = self.get_session()
         self.client.session.renew(session_id)
 
-    @debug(name='consul.put_lock', log_output=True)
+    @debug(log_output=True)
     def lock(self, key, value, session_id):
         """ Puts a key to Consul with an advisory lock """
         return self.client.kv.put(key, value, acquire=session_id)
 
-    @debug(name='consul.release_lock')
+    @debug
     def unlock(self, key, session_id):
         """ Clears a key in Consul and its advisory lock """
         return self.client.kv.put(key, "", release=session_id)
 
-    @debug(name='consul.is_locked', log_output=True)
+    @debug(log_output=True)
     def is_locked(self, key):
         """
         Checks a lock in Consul and returns the session_id if the
@@ -123,7 +123,7 @@ class Consul(object):
         except KeyError:
             return False
 
-    @debug(name='consul.read_lock', log_output=True)
+    @debug(log_output=True)
     def read_lock(self, key):
         """
         Checks a lock in Consul and returns the (session_id, value) if the
@@ -137,7 +137,7 @@ class Consul(object):
         except KeyError:
             return None, None
 
-    @debug(name='consul.has_snapshot', log_output=True)
+    @debug(log_output=True)
     def has_snapshot(self, timeout=60):
         """ Ask Consul for 'last backup' key. """
         while timeout > 0:
@@ -153,7 +153,7 @@ class Consul(object):
         raise WaitTimeoutError('Could not contact Consul to check '
                                'for snapshot after %s seconds', timeout)
 
-    @debug(name='consul.get_primary', log_output=True)
+    @debug(log_output=True)
     def get_primary(self, timeout=10):
         """
         Returns the (name, IP) tuple for the instance that Consul thinks
