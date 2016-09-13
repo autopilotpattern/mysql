@@ -101,12 +101,12 @@ class MySQLStackTest(AutopilotPatternTest):
 
         # kill the primary, make sure we get a new primary
         self.docker_stop('mysql_1')
-        self.settle('mysql-primary', 1, timeout=180)
+        self.settle('mysql-primary', 1, timeout=60)
         self.settle('mysql', 1)
 
         # check replication is still working
         primary = self.get_service_instances_from_consul('mysql-primary')[0]
-        self.exec_query(primary, insert_row.format(1,vals[2]))
+        self.exec_query(primary, insert_row.format(1, vals[2]))
         self.assert_good_replication(vals)
 
     def settle(self, service, count, timeout=60):
@@ -138,38 +138,35 @@ class MySQLStackTest(AutopilotPatternTest):
                          'Upstream blocks {} did not match actual IPs {}'
                          .format(replicas, expected))
 
-    def assert_good_replication(self, vals):
+    def assert_good_replication(self, expected_vals):
         """
         Checks each replica to make sure it has the recently written
         field2 values passed in as the `vals` param.
         """
-        check_row = 'SELECT * FROM tbl1 WHERE `field1`={};'
-        check_replica = 'SHOW SLAVE STATUS\G;'
+        check_row = 'SELECT * FROM tbl1 WHERE `field1`=1;'
+
+        def check_replica(replica):
+            timeout = 15
+            while timeout > 0:
+                # we'll give the replica a couple chances to catch up
+                results = self.exec_query(replica, check_row).splitlines()
+                got_vals = []
+                for line in results:
+                    if line.startswith('field2:'):
+                        got_vals.append(line.lstrip('field2: '))
+                    if not set(expected_vals) - set(got_vals):
+                        return None # all values replicated
+
+                # we're missing a value
+                timeout -= 1
+            return got_vals
+
         replicas = self.get_replica_containers()
         for replica in replicas:
-            timeout = 10
-            while timeout > 0:
-                # make sure the replica has had a chance to catch up
-                out = self.exec_query(replica, check_replica,
-                                      user=self.repl_user,
-                                      passwd=self.repl_passwd)
-                if 'Waiting for master to send event' in out:
-                    break
-                time.sleep(1)
-                timeout -= 1
-            else:
-                self.fail("Timed out waiting for replication to catch up")
-
-            out = self.exec_query(replica, check_row.format(1))
-            query_result = self.parse_query(out)
-            try:
-                query_vals = [row['field2'] for row in query_result]
-                self.assertEqual(len(query_vals), len(vals))
-                for val in vals:
-                    self.assertIn(val, query_vals)
-            except (KeyError, IndexError, AssertionError):
-                self.fail('Expected results: {}\nbut got: {}'
-                          .format(vals, query_result))
+            got_vals = check_replica(replica)
+            if got_vals:
+                self.fail('Replica {} is missing values {}; got {}'
+                          .format(replica, expected_vals, got_vals))
 
     def get_primary_ip(self):
         """ Get the IP for the primary from Consul. """
@@ -211,6 +208,7 @@ class MySQLStackTest(AutopilotPatternTest):
             passwd = self.passwd
         cmd = ['mysql', '-u', user,
                '-p{}'.format(passwd),
+               '--vertical', # makes parsing easier
                '-e', query, self.db]
         try:
             out = self.docker_exec(container, cmd)
@@ -219,28 +217,6 @@ class MySQLStackTest(AutopilotPatternTest):
                       .format(container, cmd, ex.output))
         return out
 
-    def parse_query(self, result):
-        """ parse the query result """
-        ignore_warn = ('Warning: Using a password on the command line '+
-                       'interface can be insecure.\n')
-        result = result.lstrip(ignore_warn)
-
-        res = result.splitlines()
-        fields = [r.strip() for r in res[0].split('\t')]
-        rows = res[1:]
-        if not rows:
-            raise Exception('No results found.')
-        parsed = []
-        try:
-            for row in rows:
-                cols = [col.strip() for col in row.split('\t')]
-                row_dict = {}
-                for i, field in enumerate(fields):
-                    row_dict[field] = cols[i]
-                parsed.append(row_dict)
-            return parsed
-        except IndexError as ex:
-            self.fail(ex)
 
 # ------------------------------------------------
 # helper functions
