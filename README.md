@@ -21,14 +21,14 @@ The lifecycle of a MySQL container is managed by 4 lifecycle hooks in the `manag
 
 ### Bootstrapping via `pre_start` handler
 
-When a container is started ContainerPilot will run the `manage.py pre_start` function, which must exit cleanly before the MySQL server will be started.
+When a container is started ContainerPilot will run the `manage.py pre_start` function, which must exit cleanly before the MySQL server will be started. See [ContainerPilot's `preStart` action docs](https://www.joyent.com/containerpilot/docs/start-stop) for how this is triggered.
 
 Once `pre_start` has gathered its configuration from the environment it verifies whether this instance has been previously started. If not, it asks Consul whether a snapshot image for the database exists on Manta. If so, it will download the snapshot and initialize the database from that snapshot using the Percona `xtrabackup` tool. If not, we perform the initial MySQL setup via `mysql_install_db`. Note that we're assuming that the first instance is launched and allowed to initialize before we bring up other instances, but this only applies the very first time we bring up the cluster. Also note that at this time the MySQL server is not yet running and so we can't complete replication setup.
 
 
 ### Maintenance via `health` handler
 
-The ContainerPilot `health` handler calls `manage.py health` periodically. The behavior of this handler depends on whether the instance is a primary, a replica, or hasn't yet been initialized as either.
+The ContainerPilot `health` handler calls `manage.py health` periodically. The behavior of this handler depends on whether the instance is a primary, a replica, or hasn't yet been initialized as either. See [ContainerPilot's service health check docs](https://www.joyent.com/containerpilot/docs/health) for how to use this in your own application.
 
 The `health` function first checks whether this instance has been previously initialized (via checking a lock file on disk). If not, it'll check if a primary has been registered with Consul. If not, the handler will attempt to obtain a lock in Consul marking it as the primary. If the lock fails (perhaps because we're bringing up multiple hosts at once and another has obtained the lock), then we'll exit and retry on the next call of the `health` function. If the lock succeeds this node is marked the primary and we'll bootstrap the rest of the MySQL application. This includes creating a default user, replication user, and default schema, as well as resetting the root password, and writing a snapshot of the initialized DB to Manta (where another instance can download it during `pre_start`).
 
@@ -39,7 +39,7 @@ If this isn't the first pass thru the health check and we've already set up this
 
 ### Failover via `on_change` handler
 
-The ContainerPilot configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, ContainerPilot will call `manage.py on_change` to perform failover.
+The ContainerPilot configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, ContainerPilot will call `manage.py on_change` to perform failover. See [ContainerPilot's `onChange` docs](https://www.joyent.com/containerpilot/docs/lifecycle#while-the-container-is-running) for how changes are identified.
 
 All remaining instances will receive the `on_change` handler call so there is a process of coordination involved to ensure that only one instance actually attempts to perform the failover. The first step is to check if there is a healthy primary! Because the `on_change` handlers are polling asynchronously it's entirely possible for another instance to have completed failover before a given instance runs its `on_change` handler. In this case, the node will either mark itself as primary (if it was assigned to be the primary by the failover node, see below) or set up replication to the new primary.
 
@@ -52,7 +52,7 @@ Once the failover is complete, the failover node will release the lock after its
 
 ### Backups in the `snapshot_task`
 
-If the node is primary, the handler will ask Consul if the TTL key for backups have expired or whether the binlog has been rotated. If either case is true, the application will create a new snapshot, upload it to Manta, and write the appropriate keys to Consul to tell replicas where to find the backup.
+If the node is primary, the handler will ask Consul if the TTL key for backups have expired or whether the binlog has been rotated. If either case is true, the application will create a new snapshot, upload it to Manta, and write the appropriate keys to Consul to tell replicas where to find the backup. See [ContainerPilot's period task docs](https://www.joyent.com/containerpilot/docs/tasks) to learn how the recurring snapshot task is configured.
 
 
 ---
