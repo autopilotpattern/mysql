@@ -94,6 +94,7 @@ test: ~/.triton/profiles.d/us-sw-1.json
 		DOCKER_TLS_VERIFY=1 \
 		DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
 		DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
+		TRITON_PROFILE=us-sw-1 \
 		COMPOSE_HTTP_TIMEOUT=300 \
 		PATH=/root/venv/3.5/bin:/usr/bin:/bin \
 		MANTA_USER=timgross \
@@ -107,6 +108,7 @@ test-local-triton: ~/.triton/profiles.d/us-sw-1.json
 		-e DOCKER_TLS_VERIFY=1 \
 		-e DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
 		-e DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
+		-e TRITON_PROFILE=us-sw-1 \
 		$(MANTA_CONFIG) \
 		$(LOCALRUN) $(PYTHON) tests.py
 
