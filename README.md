@@ -59,9 +59,9 @@ If the node is primary, the handler will ask Consul if the TTL key for backups h
 
 ### Guarantees
 
-It's very important to note that the failover process described above prevents data corruption by ensuring that all replicas have the same set of transactions before continuing. But because MySQL replication is asynchronous it cannot protect against data *loss*. It's entirely possible for the primary to fail without any replica having received its last transactions. This is an inherent limitation of MySQL asynchronous replication and you must architect your application to take this into account.
+It's very important to note that during failover, the MySQL cluster is unavailable for writes. Any client application should be using ContainerPilot or some other means to watch for changes to the `mysql-primary` service and halt writes until the failover is completed. Writes sent to the primary after it fails will be lost.
 
-Also note that during failover, the MySQL cluster is unavailable for writes. Any client application should be using ContainerPilot or some other means to watch for changes to the `mysql-primary` service and halt writes until the failover is completed. Writes sent to a failed primary during failover will be lost!
+The failover process described above prevents data corruption by ensuring that all replicas have the same set of transactions before continuing. But because MySQL replication is asynchronous it cannot protect against data *loss*. It's entirely possible for the primary to fail without any replica having received its last transactions. This is an inherent limitation of MySQL asynchronous replication and you must architect your application to take this into account!
 
 
 ### Determining if a node is primary
