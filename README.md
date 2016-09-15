@@ -5,6 +5,20 @@ MySQL designed for automated operation using the [Autopilot Pattern](http://auto
 [![DockerPulls](https://img.shields.io/docker/pulls/autopilotpattern/mysql.svg)](https://registry.hub.docker.com/u/autopilotpattern/mysql/)
 [![DockerStars](https://img.shields.io/docker/stars/autopilotpattern/mysql.svg)](https://registry.hub.docker.com/u/autopilotpattern/mysql/)
 
+- [Architecture](#Architecture)
+  - [Bootstrapping via `pre_start` handler](#bootstrapping-via-pre_start-handler)
+  - [Maintenance via `health` handler](#maintenance-via-health-handler)
+  - [Failover via `on_change` handler](#failover-via-on_change-handler)
+  - [Backups in the `snapshot_task`](#backups-in-the-snapshot_task)
+- [Concepts](#concepts)
+  - [Guarantees](#guarantees)
+  - [Determining if a node is primary](#determining-if-a-node-is-primary)
+- [Running the cluster](#running-the-cluster)
+  - [Configuration](#configuration)
+  - [Upgrading the cluster](#upgrading-the-cluster)
+  - [Where to store data](#where-to-store-data)
+  - [Using an existing database](#using-an-existing-database)
+
 ---
 
 ## Architecture
@@ -57,6 +71,8 @@ If the node is primary, the handler will ask Consul if the TTL key for backups h
 
 ---
 
+## Concepts
+
 ### Guarantees
 
 It's very important to note that during failover, the MySQL cluster is unavailable for writes. Any client application should be using ContainerPilot or some other means to watch for changes to the `mysql-primary` service and halt writes until the failover is completed. Writes sent to the primary after it fails will be lost.
@@ -72,7 +88,6 @@ In most the handlers described above, there is a need to determine whether the n
 - Ask Consul for a health instance of the `mysql-primary` service. If Consul returns an IP that matches this node, then it is primary. If Consul returns an IP that doesn't match this node, then it is a replica. If neither, then we cannot determine whether the node is primary or replica and it is marked "unassigned."
 
 Note that this determines only whether this node *thinks* it is the primary instance. During initialization (in `health` checks) an unassigned node will try to elect itself the new primary. During failover, if a node is a replica then it will also check to see if the primary that it found is actually healthy.
-
 
 ---
 
