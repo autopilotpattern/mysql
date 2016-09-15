@@ -13,10 +13,13 @@ RUN set -ex \
     # \
     # get Python drivers MySQL, Consul, and Manta \
     # \
+    && curl -Lvo /tmp/mysql-connector.deb http://dev.mysql.com/get/Downloads/Connector-Python/mysql-connector-python_2.1.3-1debian8.2_all.deb \
+    && dpkg -i /tmp/mysql-connector.deb \
+    && curl -v -Lo /tmp/mysql-utils.deb http://dev.mysql.com/get/Downloads/MySQLGUITools/mysql-utilities_1.5.6-1debian8_all.deb \
+    && dpkg -i /tmp/mysql-utils.deb \
     && curl -Lvo get-pip.py https://bootstrap.pypa.io/get-pip.py \
     && python get-pip.py \
     && pip install \
-       PyMySQL==0.6.7 \
        python-Consul==0.4.7 \
        manta==2.5.0 \
        mock==2.0.0 \
@@ -41,13 +44,18 @@ RUN set -ex \
     # clean up to minimize image layer size \
     # \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get purge -y --auto-remove $buildDeps
-
+    && apt-get purge -y --auto-remove $buildDeps \
+    && rm /tmp/mysql-connector.deb \
+    && rm /tmp/mysql-utils.deb \
+    && rm /get-pip.py \
+    && rm /docker-entrypoint.sh
 
 
 # configure ContainerPilot and MySQL
 COPY etc/* /etc/
-COPY bin/* /usr/local/bin/
+COPY bin/manager /usr/local/bin/manager
+COPY bin/test.py /usr/local/bin/test.py
+COPY bin/manage.py /usr/local/bin/manage.py
 
 # override the parent entrypoint
 ENTRYPOINT []

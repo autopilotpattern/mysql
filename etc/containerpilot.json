@@ -24,12 +24,13 @@
     {
       "name": "snapshot_check",
       "command": "python /usr/local/bin/manage.py snapshot_task",
-      "frequency": "10s",
+      "frequency": "5m",
       "timeout": "10m"
     }
   ],
   "coprocesses": [{{ if .CONSUL_AGENT }}
     {
+      "name": "consul-agent (host:{{ .CONSUL }})",
       "command": ["/usr/local/bin/consul", "agent",
                   "-data-dir=/data",
                   "-config-dir=/config",

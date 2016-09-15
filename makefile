@@ -94,6 +94,7 @@ test: ~/.triton/profiles.d/us-sw-1.json
 		DOCKER_TLS_VERIFY=1 \
 		DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
 		DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
+		TRITON_PROFILE=us-sw-1 \
 		COMPOSE_HTTP_TIMEOUT=300 \
 		PATH=/root/venv/3.5/bin:/usr/bin:/bin \
 		MANTA_USER=timgross \
@@ -107,6 +108,7 @@ test-local-triton: ~/.triton/profiles.d/us-sw-1.json
 		-e DOCKER_TLS_VERIFY=1 \
 		-e DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
 		-e DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
+		-e TRITON_PROFILE=us-sw-1 \
 		$(MANTA_CONFIG) \
 		$(LOCALRUN) $(PYTHON) tests.py
 
@@ -124,16 +126,16 @@ test-local-docker:
 unit-test:
 	docker run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
+		-v $(shell pwd)/bin/manager:/usr/local/bin/manager \
 		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
 		autopilotpattern/mysql:$(TAG) \
 		python test.py
 
-shell:
-	docker run -it --rm \
-		-v /var/run/docker.sock:/var/run/docker.sock \
-		-e COMPOSE_FILE=local-compose.yml \
-		$(LOCALRUN) /bin/bash #$(PYTHON)
+logs:
+	docker logs my_mysql_1 > mysql1.log 2>&1
+	docker logs my_mysql_2 > mysql2.log 2>&1
+	docker logs my_mysql_3 > mysql3.log 2>&1
 
 # -------------------------------------------------------
 

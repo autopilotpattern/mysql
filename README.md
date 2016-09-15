@@ -5,6 +5,20 @@ MySQL designed for automated operation using the [Autopilot Pattern](http://auto
 [![DockerPulls](https://img.shields.io/docker/pulls/autopilotpattern/mysql.svg)](https://registry.hub.docker.com/u/autopilotpattern/mysql/)
 [![DockerStars](https://img.shields.io/docker/stars/autopilotpattern/mysql.svg)](https://registry.hub.docker.com/u/autopilotpattern/mysql/)
 
+- [Architecture](#Architecture)
+  - [Bootstrapping via `pre_start` handler](#bootstrapping-via-pre_start-handler)
+  - [Maintenance via `health` handler](#maintenance-via-health-handler)
+  - [Failover via `on_change` handler](#failover-via-on_change-handler)
+  - [Backups in the `snapshot_task`](#backups-in-the-snapshot_task)
+- [Concepts](#concepts)
+  - [Guarantees](#guarantees)
+  - [Determining if a node is primary](#determining-if-a-node-is-primary)
+- [Running the cluster](#running-the-cluster)
+  - [Configuration](#configuration)
+  - [Upgrading the cluster](#upgrading-the-cluster)
+  - [Where to store data](#where-to-store-data)
+  - [Using an existing database](#using-an-existing-database)
+
 ---
 
 ## Architecture
@@ -15,42 +29,65 @@ A running cluster includes the following components:
 - [ContainerPilot](https://www.joyent.com/containerpilot): included in our MySQL containers to orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `preStart`, `health`, and `onChange` handlers.
 - [Consul](https://www.consul.io/): is our service catalog that works with ContainerPilot and helps coordinate service discovery, replication, and failover
 - [Manta](https://www.joyent.com/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
-- `triton-mysql.py`: a small Python application that ContainerPilot will call into to do the heavy lifting of bootstrapping MySQL.
+- `manage.py`: a small Python application that ContainerPilot's lifecycle hooks will call to bootstrap MySQL, perform health checks, manage replication setup, and perform coordinated failover.
 
-When a new MySQL node is started, ContainerPilot's `preStart` handler will call into `triton-mysql.py`.
+The lifecycle of a MySQL container is managed by 4 lifecycle hooks in the `manage.py` application: `pre_start`, `health`, `on_change`, and `snapshot_task`.
 
+### Bootstrapping via `pre_start` handler
 
-### Bootstrapping via `preStart` handler
+When a container is started ContainerPilot will run the `manage.py pre_start` function, which must exit cleanly before the MySQL server will be started. See [ContainerPilot's `preStart` action docs](https://www.joyent.com/containerpilot/docs/start-stop) for how this is triggered.
 
-`preStart` (formerly `onStart`) runs and must exit cleanly before the main application is started.
+Once `pre_start` has gathered its configuration from the environment it verifies whether this instance has been previously started. If not, it asks Consul whether a snapshot image for the database exists on Manta. If so, it will download the snapshot and initialize the database from that snapshot using the Percona `xtrabackup` tool. If not, we perform the initial MySQL setup via `mysql_install_db`. Note that we're assuming that the first instance is launched and allowed to initialize before we bring up other instances, but this only applies the very first time we bring up the cluster. Also note that at this time the MySQL server is not yet running and so we can't complete replication setup.
 
-The first thing the `triton-mysql.py` application does is to ask Consul whether a primary node exists. If not, the application will atomically mark the node as primary in Consul and then bootstrap the node as a new primary. Bootstrapping a primary involves setting up users (root, default, and replication), and creating a default schema. Once the primary bootstrap process is complete, it will use `xtrabackup` to create a backup and upload it to Manta. The application then writes a TTL key to Consul which will tell us when next to run a backup, and a non-expiring key that records the path on Manta where the most recent backup was stored.
-
-If a primary already exists, then the application will ask Consul for the path to the most recent backup snapshot and download it and the most recent binlog. The application will then ask Consul for the IP address of the primary and set up replication from that primary before allowing the new replica to join the cluster.
-
-Replication in this architecture uses [Global Transaction Identifiers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) so that replicas can autoconfigure their position within the binlog.
 
 ### Maintenance via `health` handler
 
-The ContainerPilot `health` handler calls `triton-mysql.py health`. If the node is a replica, it merely checks the health of the instance by making a `SELECT 1` against the database and exiting with exit code 0 (which ContainerPilot then interprets as a message to send a heartbeat to Consul).
+The ContainerPilot `health` handler calls `manage.py health` periodically. The behavior of this handler depends on whether the instance is a primary, a replica, or hasn't yet been initialized as either. See [ContainerPilot's service health check docs](https://www.joyent.com/containerpilot/docs/health) for how to use this in your own application.
 
-If the node is primary, the handler will ask Consul if the TTL key for backups have expired or whether the binlog has been rotated. If either case is true, the application will create a new snapshot, upload it to Manta, and write the appropriate keys to Consul to tell replicas where to find the backup.
+The `health` function first checks whether this instance has been previously initialized (via checking a lock file on disk). If not, it'll check if a primary has been registered with Consul. If not, the handler will attempt to obtain a lock in Consul marking it as the primary. If the lock fails (perhaps because we're bringing up multiple hosts at once and another has obtained the lock), then we'll exit and retry on the next call of the `health` function. If the lock succeeds this node is marked the primary and we'll bootstrap the rest of the MySQL application. This includes creating a default user, replication user, and default schema, as well as resetting the root password, and writing a snapshot of the initialized DB to Manta (where another instance can download it during `pre_start`).
 
-### Failover via `onChange` handler
+If this is the first pass thru the health check and a primary has already been registered in Consul, then the handler will set up replication to the primary. Replication in this architecture uses [Global Transaction Identifiers (GTID)](https://dev.mysql.com/doc/refman/5.7/en/replication-gtids.html) so that replicas can autoconfigure their position within the binlog.
 
-The ContainerPilot configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, the `onChange` handler will fire and call into `triton-mysql.py`. Replicas will all attempt to become the new primary by writing a lock into Consul. Only one replica will receive the lock and become the new primary. The new primary will reload its configuration to start writing its heartbeats as primary, while the other replicas will update their replication configuration to start replicating from the new primary.
+If this isn't the first pass thru the health check and we've already set up this node, then the health check can continue. If this node is the primary, the handler will execute a `SELECT 1` against the database to make sure its up and then renew the session in Consul indicating it is the primary. If the node is a replica, the handler will make sure that `SHOW SLAVE STATUS` returns a value. When the handler exits successfully, ContainerPilot will send a heartbeat with TTL to Consul indicating that the node is still healthy.
 
-### Promotion of replica to primary
 
-With the automatic failover described above, manually promoting a replica to a primary is a simple matter of updating the flag we've set in Consul and then allowing the ContainerPilot `onChange` handlers to update the replication topology for each node independently.
+### Failover via `on_change` handler
 
-- Update the `mysql-primary` key in Consul to match the new primary's short-form container ID (i.e. its hostname).
-- The `onChange` handlers on the other replicas will automatically detect the change in what node is the primary, and will execute `CHANGE MASTER` to change their replication source to the new primary.
-- At any point after this, we use `docker exec` to run `STOP SLAVE` on the new primary and can tear down the old primary if it still exists.
+The ContainerPilot configuration for replicas watches for changes to the primary. If the primary becomes unhealthy or updates its IP address, ContainerPilot will call `manage.py on_change` to perform failover. See [ContainerPilot's `onChange` docs](https://www.joyent.com/containerpilot/docs/lifecycle#while-the-container-is-running) for how changes are identified.
 
-### Optional standby
+All remaining instances will receive the `on_change` handler call so there is a process of coordination involved to ensure that only one instance actually attempts to perform the failover. The first step is to check if there is a healthy primary! Because the `on_change` handlers are polling asynchronously it's entirely possible for another instance to have completed failover before a given instance runs its `on_change` handler. In this case, the node will either mark itself as primary (if it was assigned to be the primary by the failover node, see below) or set up replication to the new primary.
 
-By default, the primary performs the backup snapshots. For deployments with high transactional volumes it might make sense to use a standby instance to perform snapshots so as not to use resources on the primary during the snapshot. Passing the flag `USE_STANDBY=yes` to the containers at startup will cause one instance to be reserved for this use and not serve queries.
+Once we've determined that the node should attempt a failover it tries to obtain a lock in Consul. If the failover lock fails this means another node is going to run the failover and this handler should wait for it to be completed. Once the lock has been removed the handler will either mark itself as the new primary and reload its ContainerPilot configuration to match, or will realize its a replica and quietly exit.
+
+If the failover lock succeeds then this node will run the failover, and it will do so via [`mysqlrpladmin failover`](http://dev.mysql.com/doc/mysql-utilities/1.6/en/mysqlrpladmin.html). The handler gets a list of healthy MySQL instances from Consul and passes these as candidates for primary to the `mysqlrpladmin` tool. This tool will stop replication on all candidates, determine which candidate is the best one to use as the primary, ensure that all nodes have the same transactions, and then set up replication for all replicas to the new primary. See [this blog post by Percona](https://www.percona.com/blog/2014/06/27/failover-mysql-utilities-part1-mysqlrpladmin/) for more details on how this failover step works.
+
+Once the failover is complete, the failover node will release the lock after its next pass through the health check. This ensures that if the failover node marked itself as the primary that other replicas don't attempt to failover spuriously because there's no healthy primary.
+
+
+### Backups in the `snapshot_task`
+
+If the node is primary, the handler will ask Consul if the TTL key for backups have expired or whether the binlog has been rotated. If either case is true, the application will create a new snapshot, upload it to Manta, and write the appropriate keys to Consul to tell replicas where to find the backup. See [ContainerPilot's period task docs](https://www.joyent.com/containerpilot/docs/tasks) to learn how the recurring snapshot task is configured.
+
+
+---
+
+## Concepts
+
+### Guarantees
+
+It's very important to note that during failover, the MySQL cluster is unavailable for writes. Any client application should be using ContainerPilot or some other means to watch for changes to the `mysql-primary` service and halt writes until the failover is completed. Writes sent to the primary after it fails will be lost.
+
+The failover process described above prevents data corruption by ensuring that all replicas have the same set of transactions before continuing. But because MySQL replication is asynchronous it cannot protect against data *loss*. It's entirely possible for the primary to fail without any replica having received its last transactions. This is an inherent limitation of MySQL asynchronous replication and you must architect your application to take this into account!
+
+
+### Determining if a node is primary
+
+In most the handlers described above, there is a need to determine whether the node executing the handler thinks it is the current primary. This is determined as follows:
+
+- Ask `mysqld` for replication status. If the node is replicating from an instance then it is a replica, and if it has replicas then it is a primary. If neither, continue to the next step.
+- Ask Consul for a health instance of the `mysql-primary` service. If Consul returns an IP that matches this node, then it is primary. If Consul returns an IP that doesn't match this node, then it is a replica. If neither, then we cannot determine whether the node is primary or replica and it is marked "unassigned."
+
+Note that this determines only whether this node *thinks* it is the primary instance. During initialization (in `health` checks) an unassigned node will try to elect itself the new primary. During failover, if a node is a replica then it will also check to see if the primary that it found is actually healthy.
 
 ---
 
@@ -79,9 +116,8 @@ These variables are optional but you most likely want them:
 - `MYSQL_REPL_USER`: this user will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_REPL_PASSWORD`: this password will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_DATABASE`: create this database on startup if it doesn't already exist. The `MYSQL_USER` user will be granted superuser access to that DB.
-- `LOG_LEVEL`: will set the logging level of the `triton-mysql.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels). In production you'll want this to be at `INFO` or above.
+- `LOG_LEVEL`: will set the logging level of the `manage.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels). The `DEBUG` log level is extremely verbose -- in production you'll want this to be at `INFO` or above.
 - `CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
-- `USE_STANDBY` tells the `triton-mysql.py` application to use a separate standby MySQL node to run backups. This might be useful if you have a very high write throughput on the primary node. Defaults to `no` (turn on with `yes` or `on`).
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
 
@@ -92,10 +128,9 @@ The following variables control the names of keys written to Consul. They are op
 - `LAST_BINLOG_KEY`: The key used to store the filename of the most recent binlog file on the primary. (Defaults to `mysql-last-binlog`.)
 - `BACKUP_NAME`: The name of the backup file that's stored on Manta, with optional [strftime](https://docs.python.org/2/library/time.html#time.strftime) directives. (Defaults to `mysql-backup-%Y-%m-%dT%H-%M-%SZ`.)
 - `BACKUP_TTL`: Time in seconds to wait between backups. (Defaults to `86400`, or 24 hours.)
-- `SESSION_CACHE_FILE`: The path to the on-disk cache of the Consul session ID for each node. (Defaults to `/tmp/mysql-session`.)
 - `SESSION_NAME`: The name used for session locks. (Defaults to `mysql-primary-lock`.)
 
-These variables *may* be passed but it's not recommended to do this. Instead we'll set a one-time root password during DB initialization; the password will be dropped into the logs. Security can be improved by using a key management system in place of environment variables. The constructor for the `MySQLNode` class would be a good place to hook in this behavior, which is out-of-scope for this demonstration.
+These variables *may* be passed but it's not recommended to do this. Instead we'll set a one-time root password during DB initialization; the password will be dropped into the logs. Security can be improved by using a key management system in place of environment variables. The constructor for the `Node` class in `manage.py` would be a good place to hook in this behavior, which is out-of-scope for this demonstration.
 
 - `MYSQL_RANDOM_ROOT_PASSWORD`: defaults to "yes"
 - `MYSQL_ONETIME_PASSWORD`: defaults to "yes"
@@ -122,11 +157,20 @@ mysql:
 MANTA_BUCKET=/companyaccount/stor/developers/${USER}/backups
 ```
 
+
+### Upgrading a cluster
+
+If you need to upgrade MySQL to a backwards compatible version, create a new image with the new MySQL. Bring up a new instance running that image; it will get the snapshot from Manta and make itself a replica. You can then replace all the replicas with the new image and finally execute a failover by stopping the primary instance. During the cutover, the cluster will be unavailable for writes.
+
+If you need to upgrade `manage.py`, you can use the same process so long as you're using a compatible major-version of this repo. Because the container image includes MySQL, ContainerPilot, and the code in `manage.py` the [releases](https://github.com/autopilotpattern/mysql/releases) are versioned with both the MySQL version and the release version of this repo, using semantic versioning for the latter. For example, release [5.6r2.2.0](https://github.com/autopilotpattern/mysql/releases/tag/5.6r2.2.0) is MySQL5.6 with the 2.2.0 version of the `manage.py` code. It is not backwards compatible with [5.6r1.0.0](https://github.com/autopilotpattern/mysql/releases/tag/r1.0.0) but is backwards compatible with [5.6r2.1.0](https://github.com/autopilotpattern/mysql/releases/tag/5.6r2.1.0). Upgrading between major versions of `manage.py` currently can't be done automatically. You'll need to stand up a new cluster using the snapshot from your old cluster.
+
+
 ### Where to store data
 
 This pattern automates the data management and makes container effectively stateless to the Docker daemon and schedulers. This is designed to maximize convenience and reliability by minimizing the external coordination needed to manage the database. The use of external volumes (`--volumes-from`, `-v`, etc.) is not recommended.
 
 On Triton, there's no need to use data volumes because the performance hit you normally take with overlay file systems in Linux doesn't happen with ZFS.
+
 
 ### Using an existing database
 
