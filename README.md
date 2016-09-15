@@ -142,11 +142,20 @@ mysql:
 MANTA_BUCKET=/companyaccount/stor/developers/${USER}/backups
 ```
 
+
+### Upgrading a cluster
+
+If you need to upgrade MySQL to a backwards compatible version, create a new image with the new MySQL. Bring up a new instance running that image; it will get the snapshot from Manta and make itself a replica. You can then replace all the replicas with the new image and finally execute a failover by stopping the primary instance. During the cutover, the cluster will be unavailable for writes.
+
+If you need to upgrade `manage.py`, you can use the same process so long as you're using a compatible major-version of this repo. Because the container image includes MySQL, ContainerPilot, and the code in `manage.py` the [releases](https://github.com/autopilotpattern/mysql/releases) are versioned with both the MySQL version and the release version of this repo, using semantic versioning for the latter. For example, release [5.6r2.2.0](https://github.com/autopilotpattern/mysql/releases/tag/5.6r2.2.0) is MySQL5.6 with the 2.2.0 version of the `manage.py` code. It is not backwards compatible with [5.6r1.0.0](https://github.com/autopilotpattern/mysql/releases/tag/r1.0.0) but is backwards compatible with [5.6r2.1.0](https://github.com/autopilotpattern/mysql/releases/tag/5.6r2.1.0). Upgrading between major versions of `manage.py` currently can't be done automatically. You'll need to stand up a new cluster using the snapshot from your old cluster.
+
+
 ### Where to store data
 
 This pattern automates the data management and makes container effectively stateless to the Docker daemon and schedulers. This is designed to maximize convenience and reliability by minimizing the external coordination needed to manage the database. The use of external volumes (`--volumes-from`, `-v`, etc.) is not recommended.
 
 On Triton, there's no need to use data volumes because the performance hit you normally take with overlay file systems in Linux doesn't happen with ZFS.
+
 
 ### Using an existing database
 
