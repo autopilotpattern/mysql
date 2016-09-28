@@ -97,8 +97,9 @@ class TestHealth(unittest.TestCase):
         temp_file = tempfile.NamedTemporaryFile()
         cp.path = temp_file.name
         my.datadir = tempfile.mkdtemp()
-        self.node = manage.Node(consul=consul, cp=cp, mysql=my,
-                                ip='192.168.1.101', name='node1')
+        self.node = manage.Node(consul=consul, cp=cp, mysql=my)
+        self.node.ip = '192.168.1.101'
+        self.node.name = 'node1'
 
     def tearDown(self):
         logging.getLogger().setLevel(logging.DEBUG)
@@ -353,8 +354,9 @@ class TestOnChange(unittest.TestCase):
         cp.path = temp_file.name
         cp.reload = mock.MagicMock(return_value=True)
 
-        self.node = manage.Node(consul=consul, cp=cp, mysql=my,
-                                ip='192.168.1.101', name='node1')
+        self.node = manage.Node(consul=consul, cp=cp, mysql=my)
+        self.node.ip = '192.168.1.101'
+        self.node.name = 'node1'
 
     def tearDown(self):
         logging.getLogger().setLevel(logging.DEBUG)

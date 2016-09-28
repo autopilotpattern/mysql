@@ -25,18 +25,15 @@ class Node(object):
     Node represents the state of our running container and carries
     around the MySQL config, and clients for Consul and Manta.
     """
-    def __init__(self, mysql=None, cp=None, consul=None, manta=None,
-                 name='', ip=''):
+    def __init__(self, mysql=None, cp=None, consul=None, manta=None):
         self.mysql = mysql
         self.consul = consul
         self.manta = manta
         self.cp = cp
 
-        # these fields can all be overriden for dependency injection
-        # in testing only; don't pass these args in normal operation
-        self.hostname = name if name else socket.gethostname()
-        self.name = name if name else 'mysql-{}'.format(self.hostname)
-        self.ip = ip if ip else get_ip()
+        self.hostname = socket.gethostname()
+        self.name = 'mysql-{}'.format(self.hostname)
+        self.ip = get_ip()
 
     @debug(log_output=True)
     def is_primary(self):
