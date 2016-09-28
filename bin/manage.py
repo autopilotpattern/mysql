@@ -1,7 +1,6 @@
 """ autopilotpattern/mysql ContainerPilot handlers """
 from __future__ import print_function
 from datetime import datetime
-import fcntl
 import os
 import socket
 import subprocess
@@ -16,8 +15,7 @@ from manager.utils import \
     log, get_ip, debug, \
     UnknownPrimary, WaitTimeoutError, \
     PRIMARY, REPLICA, UNASSIGNED, \
-    PRIMARY_KEY, BACKUP_TTL_KEY, LAST_BINLOG_KEY, BACKUP_TTL, \
-    BACKUP_NAME, LAST_BACKUP_KEY
+    PRIMARY_KEY, BACKUP_NAME
 
 
 class Node(object):
@@ -226,131 +224,50 @@ def snapshot_task(node):
     Create a snapshot and send it to the object store if this is the
     node and time to do so.
     """
-
-    @debug
-    def is_backup_running():
-        """ Run only one snapshot on an instance at a time """
-        # TODO: I think we can just write here and bail?
-        lockfile_name = '/tmp/{}'.format(BACKUP_TTL_KEY)
-        try:
-            backup_lock = open(lockfile_name, 'r+')
-        except IOError:
-            backup_lock = open(lockfile_name, 'w')
-        try:
-            fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
-            fcntl.flock(backup_lock, fcntl.LOCK_UN)
-            return False
-        except IOError:
-            return True
-        finally:
-            if backup_lock:
-                backup_lock.close()
-
-    @debug
-    def is_binlog_stale(node):
-        """ Compare current binlog to that recorded w/ Consul """
-        results = node.mysql.query('show master status')
-        try:
-            binlog_file = results[0]['File']
-            last_binlog_file = node.consul.get(LAST_BINLOG_KEY)
-        except (IndexError, KeyError):
-            return True
-        return binlog_file != last_binlog_file
-
-    @debug
-    def is_time_for_snapshot(consul):
-        """ Check if it's time to do a snapshot """
-        if consul.is_check_healthy(BACKUP_TTL_KEY):
-            return False
-        return True
-
-    if not node.is_snapshot_node() or is_backup_running():
-        # bail-out early if we can avoid making a DB connection
+    # bail-out early if we can avoid making a DB connection
+    if not node.is_snapshot_node() or not node.consul.lock_snapshot(node.name):
         return
 
-    if is_binlog_stale(node) or is_time_for_snapshot(node.consul):
+    binlog_file = node.mysql.get_binlog()
+    if node.consul.is_snapshot_stale(binlog_file):
         # we'll let exceptions bubble up here. The task will fail
-        # and be logged, and when the BACKUP_TTL_KEY expires we can
+        # and be logged, and when the BACKUP_LOCK_KEY expires we can
         # alert on that externally.
-        write_snapshot(node)
+        try:
+            write_snapshot(node)
+        finally:
+            node.consul.unlock_snapshot()
+
 
 @debug
 def write_snapshot(node):
     """
-    Create a new snapshot, upload it to Manta, and register it
-    with Consul. Exceptions bubble up to caller
-    """
-    # we set the BACKUP_TTL before we run the backup so that we don't
-    # have multiple health checks running concurrently.
-    set_backup_ttl(node)
-    create_snapshot(node)
-
-# TODO: break this up into smaller functions inside the write_snapshot scope
-@debug(log_output=True)
-def create_snapshot(node):
-    """
     Calls out to innobackupex to snapshot the DB, then pushes the file
     to Manta and writes that the work is completed in Consul.
     """
+    now = datetime.utcnow()
+    # we don't want .isoformat() here because of URL encoding
+    backup_id = now.strftime('{}'.format(BACKUP_NAME))
+    backup_time = now.isoformat()
 
-    try:
-        lockfile_name = '/tmp/{}'.format(BACKUP_TTL_KEY)
-        backup_lock = open(lockfile_name, 'r+')
-    except IOError:
-        backup_lock = open(lockfile_name, 'w')
+    with open('/tmp/backup.tar', 'w') as f:
+        subprocess.check_call(['/usr/bin/innobackupex',
+                               '--user={}'.format(node.mysql.repl_user),
+                               '--password={}'.format(node.mysql.repl_password),
+                               '--no-timestamp',
+                               #'--compress',
+                               '--stream=tar',
+                               '/tmp/backup'], stdout=f)
+    log.info('snapshot completed, uploading to object store')
+    node.manta.put_backup(backup_id, '/tmp/backup.tar')
+    log.info('snapshot uploaded to %s/%s', node.manta.bucket, backup_id)
 
-    try:
-        fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
-
-        # we don't want .isoformat() here because of URL encoding
-        backup_id = datetime.utcnow().strftime('{}'.format(BACKUP_NAME))
-
-        with open('/tmp/backup.tar', 'w') as f:
-            subprocess.check_call(['/usr/bin/innobackupex',
-                                   '--user={}'.format(node.mysql.repl_user),
-                                   '--password={}'.format(node.mysql.repl_password),
-                                   '--no-timestamp',
-                                   #'--compress',
-                                   '--stream=tar',
-                                   '/tmp/backup'], stdout=f)
-        log.info('snapshot completed, uploading to object store')
-        node.manta.put_backup(backup_id, '/tmp/backup.tar')
-
-        log.debug('snapshot uploaded to %s/%s, setting LAST_BACKUP_KEY'
-                  ' in Consul', node.manta.bucket, backup_id)
-        node.consul.put(LAST_BACKUP_KEY, backup_id)
-
-        # write the filename of the binlog to Consul so that we know if
-        # we've rotated since the last backup.
-        # query lets KeyError bubble up -- something's broken
-        results = node.mysql.query('show master status')
-        binlog_file = results[0]['File']
-        log.debug('setting LAST_BINLOG_KEY in Consul')
-        node.consul.put(LAST_BINLOG_KEY, binlog_file)
-
-    except IOError:
-        return False
-    finally:
-        log.debug('unlocking backup lock')
-        fcntl.flock(backup_lock, fcntl.LOCK_UN)
-        log.debug('closing backup file')
-        if backup_lock:
-            backup_lock.close()
-
-
-@debug
-def set_backup_ttl(node):
-    """
-    Write a TTL check for the BACKUP_TTL key.
-    """
-    if not node.consul.pass_check(BACKUP_TTL_KEY):
-        node.consul.register_check(BACKUP_TTL_KEY, BACKUP_TTL)
-        if not node.consul.pass_check(BACKUP_TTL_KEY):
-            log.error('Could not register health check for %s', BACKUP_TTL_KEY)
-            return False
-    return True
-
-
+    # write the filename of the binlog to Consul so that we know if
+    # we've rotated since the last backup.
+    # query lets KeyError bubble up -- something's broken
+    results = node.mysql.query('show master status')
+    binlog_file = results[0]['File']
+    node.consul.record_backup(backup_id, backup_time, binlog_file)
 
 # ---------------------------------------------------------
 # run_as_* functions determine the top-level behavior of a node

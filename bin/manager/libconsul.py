@@ -1,9 +1,13 @@
 """ Module for Consul client wrapper and related tooling. """
+from datetime import datetime, timedelta
+import fcntl
+import json
 import os
 import time
 
 from manager.utils import debug, env, log, to_flag, \
-    WaitTimeoutError, UnknownPrimary, PRIMARY_KEY, LAST_BACKUP_KEY
+    WaitTimeoutError, UnknownPrimary, PRIMARY_KEY, LAST_BACKUP_KEY, \
+    BACKUP_TTL, BACKUP_LOCK_KEY, LAST_BINLOG_KEY
 
 # pylint: disable=import-error,invalid-name,dangerous-default-value
 import consul as pyconsul
@@ -13,7 +17,7 @@ SESSION_NAME = env('SESSION_NAME', 'mysql-primary-lock')
 SESSION_TTL = env('SESSION_TTL', 25, fn=int)
 FAILOVER_KEY = env('FAILOVER_IN_PROGRESS', 'FAILOVER_IN_PROGRESS')
 FAILOVER_SESSION_FILE = env('FAILOVER_SESSION_FILE', '/tmp/failover-session')
-
+MAX_SESSION=3600
 
 class Consul(object):
     """ Consul represents the Consul instance this node talks to """
@@ -80,7 +84,7 @@ class Consul(object):
         if not cached:
             return self.create_session(key, ttl)
         try:
-            with open(on_disk, 'r') as f:
+            with open(on_disk, 'r+') as f:
                 session_id = f.read()
         except IOError:
             session_id = self.create_session(key, ttl)
@@ -140,22 +144,6 @@ class Consul(object):
             return session_lock, value
         except KeyError:
             return None, None
-
-    @debug(log_output=True)
-    def has_snapshot(self, timeout=60):
-        """ Ask Consul for 'last backup' key. """
-        while timeout > 0:
-            try:
-                result = self.client.kv.get(LAST_BACKUP_KEY)
-                if result[1]:
-                    return result[1]['Value']
-                return None
-            except pyconsul.ConsulException:
-                # Consul isn't up yet
-                timeout -= 1
-                time.sleep(1)
-        raise WaitTimeoutError('Could not contact Consul to check '
-                               'for snapshot after %s seconds', timeout)
 
     @debug(log_output=True)
     def get_primary(self, timeout=10):
@@ -229,3 +217,96 @@ class Consul(object):
             # to unlock again on the next pass
             log.debug('failover session lock (%s) not removed because '
                       'primary has not reported as healthy', session_id)
+
+
+
+
+    @debug(log_output=True)
+    def has_snapshot(self, timeout=60):
+        """ Ask Consul for 'last backup' key. """
+        while timeout > 0:
+            try:
+                result = self.client.kv.get(LAST_BACKUP_KEY)
+                if result[1]:
+                    return json.loads(result[1]['Value'])['id']
+                return None
+            except pyconsul.ConsulException:
+                # Consul isn't up yet
+                timeout -= 1
+                time.sleep(1)
+            except (KeyError, TypeError, ValueError):
+                raise # unexpected value / invalid JSON in Consul
+        raise WaitTimeoutError('Could not contact Consul to check '
+                               'for snapshot after %s seconds', timeout)
+
+
+    @debug
+    def lock_snapshot(self, hostname):
+        """
+        Lock a session in Consul for the failover and cache the
+        session as a file on disk. Prevents more than one attempt
+        to lock the session in Consul by using a lock on the local
+        session file too.
+        """
+        lock_filename = '/tmp/' + BACKUP_LOCK_KEY
+        session_id = self.get_session(BACKUP_LOCK_KEY, ttl=MAX_SESSION,
+                                      on_disk=lock_filename)
+        try:
+            lock_file = open(lock_filename, 'r+')
+            fcntl.flock(lock_file, fcntl.LOCK_EX|fcntl.LOCK_NB)
+            return self.lock(BACKUP_LOCK_KEY, hostname, session_id)
+        except IOError:
+            # couldn't obtain local file lock
+            return False
+
+    @debug
+    def unlock_snapshot(self):
+        """
+        If we've previously locked a session for snapshot, unlock
+        the session and remove the session file.
+        """
+        lock_filename = '/tmp/' + BACKUP_LOCK_KEY
+        try:
+            with open(BACKUP_LOCK_KEY, 'r+') as f:
+                session_id = f.read()
+                self.unlock(BACKUP_LOCK_KEY, session_id)
+                fcntl.flock(f, fcntl.LOCK_UN)
+                os.remove(lock_filename)
+        except (IOError, OSError):
+            # we don't have a session file so just move on
+            pass
+
+    @debug
+    def record_backup(self, backup_id, backup_time, binlog_file):
+        backup_val = {'id': backup_id, 'dt': backup_time}
+        self.put(LAST_BACKUP_KEY, json.dumps(backup_val))
+        self.put(LAST_BINLOG_KEY, binlog_file)
+
+    @debug
+    def is_snapshot_stale(self, binlog_file):
+        """ Check if it's time to do a snapshot """
+        if self._is_binlog_stale(binlog_file):
+            return True
+
+        result = self.get(LAST_BACKUP_KEY)
+        try:
+            dt = json.loads(result)['dt']
+        except (KeyError, TypeError, ValueError):
+            # TODO: should we log this and return True so we recover?
+            raise # unexpected value / invalid JSON in Consul
+
+        parsed_dt = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S.%f")
+        yesterday = datetime.utcnow() - timedelta(days=1)
+        if parsed_dt < yesterday:
+            return True
+
+        return False
+
+    @debug
+    def _is_binlog_stale(self, binlog_file):
+        """ Compare current binlog to that recorded w/ Consul """
+        try:
+            last_binlog_file = self.get(LAST_BINLOG_KEY)
+        except (IndexError, KeyError):
+            return True
+        return binlog_file != last_binlog_file

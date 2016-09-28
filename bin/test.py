@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 import fcntl
 import json
 import logging
@@ -73,7 +74,7 @@ class TestPreStart(unittest.TestCase):
 
         def kv_gets(*args, **kwargs):
             yield pyconsul.ConsulException()
-            yield [0, {'Value': 'ok'}]
+            yield [0, {'Value': '{"id": "xxxx", "dt": "yyyyy"}'}]
 
         self.node.consul.client.kv.get.side_effect = kv_gets()
 
@@ -615,24 +616,58 @@ class TestSnapshotTask(unittest.TestCase):
 
     def test_binlog_stale(self):
         """ Snapshot if the binlog is stale even if its not time to do so """
-        self.node.consul.is_check_healthy.return_value = True
-        self.node.consul.get.return_value = 'mybackup1'
-        self.node.mysql.query.return_value = [{'File':'mybackup2'}]
+        consul = Consul(envs=get_environ())
+        binlog_file = 'mysql.002'
+        now = datetime.utcnow().isoformat()
+        consul_values = {
+            LAST_BACKUP_KEY: '{{"id": "xxxx", "dt": "{}"}}'.format(now),
+            LAST_BINLOG_KEY: 'mysql.001',
+        }
+        consul.get = consul_values.__getitem__
+        self.assertTrue(consul.is_snapshot_stale(binlog_file))
 
-        with mock.patch('manage.write_snapshot') as ws:
-            manage.snapshot_task(self.node)
-            self.node.mysql.query.assert_called_once()
-            self.node.consul.get.assert_called_once()
-            self.assertTrue(ws.called)
+    def test_is_snapshot_stale_invalid(self):
+        """ Snapshot if the timer has elapsed even if the binlog isn't stale"""
+        consul = Consul(envs=get_environ())
+        binlog_file = 'mysql.001'
+
+        consul_values = {
+            LAST_BACKUP_KEY: '{"id": "xxxx", "dt": "yyyyy"}',
+            LAST_BINLOG_KEY: 'mysql.001',
+        }
+        consul.get = consul_values.__getitem__
+        try:
+            self.assertTrue(consul.is_snapshot_stale(binlog_file))
+            self.fail('Expected ValueError with invalid data in Consul')
+        except ValueError:
+            pass
+
+        # not stale
+        now = datetime.utcnow().isoformat()
+        consul_values = {
+            LAST_BACKUP_KEY: '{{"id": "xxxx", "dt": "{}"}}'.format(now),
+            LAST_BINLOG_KEY: 'mysql.001',
+        }
+        consul.get = consul_values.__getitem__
+        self.assertFalse(consul.is_snapshot_stale(binlog_file))
+
+        # stale
+        then = (datetime.utcnow() - timedelta(hours=25)).isoformat()
+        consul_values = {
+            LAST_BACKUP_KEY: '{{"id": "xxxx", "dt": "{}"}}'.format(then),
+            LAST_BINLOG_KEY: 'mysql.001',
+        }
+        consul.get = consul_values.__getitem__
+        self.assertTrue(consul.is_snapshot_stale(binlog_file))
 
     def test_backup_already_running(self):
         """ Don't snapshot if there's already a snapshot running """
-        self.node.consul.is_check_healthy.return_value = False
-        self.node.consul.get.return_value = 'mybackup1'
-        self.node.mysql.query.return_value = [{'File':'mybackup2'}]
+        self.node.consul = Consul(envs=get_environ())
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.client.session.create.return_value = 'xyzzy'
 
         with mock.patch('manage.write_snapshot') as ws:
-            lockfile_name = '/tmp/mysql-backup-run'
+            lockfile_name = '/tmp/' + BACKUP_LOCK_KEY
             try:
                 backup_lock = open(lockfile_name, 'w')
                 fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -642,12 +677,22 @@ class TestSnapshotTask(unittest.TestCase):
                 backup_lock.close()
             self.assertFalse(ws.called)
 
-    def test_time_to_snapshot(self):
-        """ Snapshot if the timer has elapsed even if the binlog isn't stale"""
-        self.node.consul.is_check_healthy.return_value = False
-        self.node.consul.get.return_value = 'mybackup1'
-        self.node.mysql.query.return_value = [{'File':'mybackup1'}]
+    def test_backup_unlocked(self):
+        """
+        Make sure that if a snapshot has run that we unlock correctly.
+        """
+        self.node.consul = Consul(envs=get_environ())
+        self.node.consul.client = mock.MagicMock()
+        self.node.consul.client.session.create.return_value = 'xyzzy'
         with mock.patch('manage.write_snapshot') as ws:
+            lockfile_name = '/tmp/' + BACKUP_LOCK_KEY
+            try:
+                backup_lock = open(lockfile_name, 'w')
+                fcntl.flock(backup_lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
+                manage.snapshot_task(self.node)
+            finally:
+                fcntl.flock(backup_lock, fcntl.LOCK_UN)
+                backup_lock.close()
             manage.snapshot_task(self.node)
             self.assertTrue(ws.called)
 
