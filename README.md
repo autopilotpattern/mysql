@@ -122,9 +122,8 @@ These variables are optional but you most likely want them:
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
 
 - `PRIMARY_KEY`: The key used to record a lock on what node is primary. (Defaults to `mysql-primary`.)
-- `STANDBY_KEY`: The key used to record a lock on what node is standby. (Defaults to `mysql-standby`.)
-- `BACKUP_TTL_KEY`: The name of the service that the backup TTL will be associated with. (Defaults to `mysql-backup-run`.)
-- `LAST_BACKUP_KEY`: The key used to store the path to the most recent backup. (Defaults to `mysql-last-backup`.)
+- `BACKUP_LOCK_KEY`: The key used to record a lock on a running snapshot. (Defaults to `mysql-backup-runninbg`.)
+- `LAST_BACKUP_KEY`: The key used to store the path and timestamp of the most recent backup. (Defaults to `mysql-last-backup`.)
 - `LAST_BINLOG_KEY`: The key used to store the filename of the most recent binlog file on the primary. (Defaults to `mysql-last-binlog`.)
 - `BACKUP_NAME`: The name of the backup file that's stored on Manta, with optional [strftime](https://docs.python.org/2/library/time.html#time.strftime) directives. (Defaults to `mysql-backup-%Y-%m-%dT%H-%M-%SZ`.)
 - `BACKUP_TTL`: Time in seconds to wait between backups. (Defaults to `86400`, or 24 hours.)
