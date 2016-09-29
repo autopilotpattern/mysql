@@ -1,7 +1,7 @@
 """ Module for Manta client wrapper and related tooling. """
 import logging
 import os
-from manager.utils import debug, env
+from manager.utils import debug, env, to_flag
 
 # pylint: disable=import-error,dangerous-default-value,invalid-name
 import manta as pymanta
@@ -21,16 +21,19 @@ class Manta(object):
         self.key_id = env('MANTA_KEY_ID', None, envs)
         self.url = env('MANTA_URL', 'https://us-east.manta.joyent.com', envs)
         self.bucket = env('MANTA_BUCKET', '/{}/stor'.format(self.account), envs)
+        is_tls = env('MANTA_TLS_INSECURE', False, envs, fn=to_flag)
 
         # we don't want to use `env` here because we have a different
         # de-munging to do
         self.private_key = envs.get('MANTA_PRIVATE_KEY', '').replace('#', '\n')
         self.signer = pymanta.PrivateKeySigner(self.key_id, self.private_key)
-        self.client = pymanta.MantaClient(self.url,
-                                          self.account,
-                                          subuser=self.user,
-                                          role=self.role,
-                                          signer=self.signer)
+        self.client = pymanta.MantaClient(
+            self.url,
+            self.account,
+            subuser=self.user,
+            role=self.role,
+            disable_ssl_certificate_validation=is_tls,
+            signer=self.signer)
 
     @debug
     def get_backup(self, backup_id):
