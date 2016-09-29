@@ -351,3 +351,10 @@ class MySQL(object):
              '--rpl-user={}:{}'.format(user, passwd),
              'failover']
         )
+
+    @debug()
+    def get_binlog(self):
+        """ Gets the current binlog file name """
+        results = self.query('show master status')
+        binlog_file = results[0]['File']
+        return binlog_file

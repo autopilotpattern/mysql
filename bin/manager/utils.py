@@ -111,7 +111,7 @@ def to_flag(val):
 # env values for keys
 PRIMARY_KEY = env('PRIMARY_KEY', 'mysql-primary')
 LAST_BACKUP_KEY = env('LAST_BACKUP_KEY', 'mysql-last-backup')
-BACKUP_TTL_KEY = env('BACKUP_TTL_KEY', 'mysql-backup-run')
+BACKUP_LOCK_KEY = env('BACKUP_LOCK_KEY', 'mysql-backup-running')
 LAST_BINLOG_KEY = env('LAST_BINLOG_KEY', 'mysql-last-binlog')
 BACKUP_NAME = env('BACKUP_NAME', 'mysql-backup-%Y-%m-%dT%H-%M-%SZ')
 BACKUP_TTL = env('BACKUP_TTL', 86400, fn='{}s'.format) # every 24 hours
