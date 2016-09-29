@@ -15,8 +15,13 @@ mysql:
       - LOG_LEVEL
 
 consul:
-    image: progrium/consul:latest
-    command: -server -bootstrap -ui-dir /ui
+    image: autopilotpattern/consul:0.7r0.7
+    command: >-
+      /usr/local/bin/containerpilot
+      /bin/consul agent -server
+        -bootstrap-expect 1
+        -config-dir=/etc/consul
+        -ui-dir /ui
     restart: always
     mem_limit: 128m
     ports:
