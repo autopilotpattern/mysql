@@ -94,7 +94,7 @@ test: ~/.triton/profiles.d/us-sw-1.json
 		DOCKER_TLS_VERIFY=1 \
 		DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
 		DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
-		TRITON_PROFILE=us-sw-1 \
+		TRITON_PROFILE=TritonTesting \
 		COMPOSE_HTTP_TIMEOUT=300 \
 		PATH=/root/venv/3.5/bin:/usr/bin:/bin \
 		MANTA_USER=timgross \
@@ -126,16 +126,13 @@ test-local-docker:
 unit-test:
 	docker run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
-		-v $(shell pwd)/bin/manager:/usr/local/bin/manager \
-		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
-		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
 		autopilotpattern/mysql:$(TAG) \
 		python test.py
 
-## Tear down all project containers
+## Tear down all containers
 teardown:
-	docker-compose -p my stop
-	docker-compose -p my rm -f
+	docker ps | awk -F' +' 'NR > 1 {print $$NF}' | xargs docker kill
+	docker ps -a | awk -F' +' 'NR > 1 {print $$NF}' | xargs docker rm -f
 
 ## Dump logs for each container to local disk
 logs:
