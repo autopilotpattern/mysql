@@ -156,18 +156,8 @@ envcheck() {
     fi
 }
 
-# runs unit tests inside a Docker container
-test() {
-    docker run -it --rm \
-           -v $(pwd)/bin:/usr/local/bin \
-           -v $(pwd)/etc/containerpilot.json:/etc/containerpilot.json \
-           -w /usr/local/bin \
-           my_mysql \
-           python test.py
-}
-
 get_root_password() {
-    echo $(docker logs mysql_mysql_1 2>&1 | \
+    echo $(docker logs ${COMPOSE_PROJECT_NAME:-mysql}_mysql_1 2>&1 | \
                awk '/Generated root password/{print $NF}' | \
                awk '{$1=$1};1'
         ) | pbcopy

@@ -16,8 +16,12 @@ build:
     - make unit-test
     - make test
 
+  on_failure:
+    - make teardown
+
   # send the containers to the Docker Hub
   on_success:
+    - make teardown
     - make ship
 
 integrations:

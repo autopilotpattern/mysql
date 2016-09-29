@@ -1,3 +1,7 @@
+"""
+Integration tests for autopilotpattern/mysql. These tests are executed
+inside a test-running container based on autopilotpattern/testing.
+"""
 from __future__ import print_function
 import os
 from os.path import expanduser
@@ -236,4 +240,4 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         if sys.argv[1] == "unit":
             UNIT_ONLY=True
-    unittest.main()
+    unittest.main(failfast=True)
