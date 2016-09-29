@@ -48,28 +48,6 @@ class Consul(object):
         """ Puts a value for the key; allows all exceptions to bubble up """
         return self.client.kv.put(key, value)
 
-    def register_check(self, key, ttl):
-        """ Registers a new health check """
-        self.client.agent.check.register(
-            name=key,
-            check=pyconsul.Check.ttl(ttl),
-            check_id=key
-        )
-
-    def pass_check(self, key):
-        """ Marks an existing check as passing """
-        return self.client.agent.check.ttl_pass(key)
-
-    def is_check_healthy(self, key):
-        """ Returns whether the check for the given key is passing """
-        try:
-            check = self.client.agent.checks()[key]
-            if check['Status'] == 'passing':
-                return True
-            return False
-        except KeyError:
-            return False
-
     @debug(log_output=True)
     def get_session(self, key=SESSION_NAME, ttl=SESSION_TTL,
                     on_disk=SESSION_CACHE_FILE, cached=True):
