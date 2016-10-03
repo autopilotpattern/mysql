@@ -2,6 +2,7 @@ language: none
 
 build:
   pre_ci:
+    - make teardown
     - make test-runner
 
   pre_ci_boot:
