@@ -132,7 +132,14 @@ unit-test:
 		autopilotpattern/mysql:$(TAG) \
 		python test.py
 
+## Tear down all project containers
+teardown:
+	docker-compose -p my stop
+	docker-compose -p my rm -f
+
+## Dump logs for each container to local disk
 logs:
+	docker logs my_consul_1 > consul1.log 2>&1
 	docker logs my_mysql_1 > mysql1.log 2>&1
 	docker logs my_mysql_2 > mysql2.log 2>&1
 	docker logs my_mysql_3 > mysql3.log 2>&1
