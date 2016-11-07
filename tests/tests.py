@@ -157,7 +157,7 @@ class MySQLStackTest(AutopilotPatternTest):
                 got_vals = []
                 for line in results:
                     if line.startswith('field2:'):
-                        got_vals.append(line.lstrip('field2: '))
+                        got_vals.append(line.replace('field2: ', '', 1))
                     if not set(expected_vals) - set(got_vals):
                         return None # all values replicated
 
