@@ -36,16 +36,15 @@ class ContainerPilot(object):
         cfg = cfg.replace('}{{ end }}', '}')
         config = json.loads(cfg)
 
-        consul = env('CONSUL', 'consul', envs, fn='{}:8500'.format)
-
         if env('CONSUL_AGENT', False, envs, to_flag):
             config['consul'] = 'localhost:8500'
             cmd = config['coprocesses'][0]['command']
             host_cfg_idx = cmd.index('-retry-join') + 1
-            cmd[host_cfg_idx] = consul
+            cmd[host_cfg_idx] = env('CONSUL', 'consul', envs)
             config['coprocesses'][0]['command'] = cmd
         else:
-            config['consul'] = consul
+            config['consul'] = env('CONSUL', 'consul', envs,
+                                   fn='{}:8500'.format)
             config['coprocesses'] = []
 
         self.config = config

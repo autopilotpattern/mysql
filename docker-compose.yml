@@ -12,16 +12,12 @@ mysql:
     environment:
       - CONTAINERPILOT=file:///etc/containerpilot.json
       - CONSUL_AGENT=1
-      - LOG_LEVEL
+      - LOG_LEVEL=INFO
 
 consul:
-    image: autopilotpattern/consul:0.7r0.7
-    command: >-
-      /usr/local/bin/containerpilot
-      /bin/consul agent -server
-        -bootstrap-expect 1
-        -config-dir=/etc/consul
-        -ui-dir /ui
+    image: consul:0.7.1
+    command: >
+      agent -server -client=0.0.0.0 -bootstrap -ui
     restart: always
     mem_limit: 128m
     ports:
