@@ -314,6 +314,7 @@ def assert_initialized_for_state(node):
             os.rmdir(LOCK_PATH)
             sys.exit(1)
         if node.cp.update():
+            os.rmdir(LOCK_PATH)
             node.cp.reload()
             # this is racy with the SIGHUP that ContainerPilot just got
             # sent, but if the Consul agent shuts down quickly enough we
