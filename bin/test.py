@@ -835,7 +835,7 @@ class TestContainerPilotConfig(unittest.TestCase):
         self.assertEqual(cp.config['consul'], 'localhost:8500')
         cmd = cp.config['coprocesses'][0]['command']
         host_cfg_idx = cmd.index('-retry-join') + 1
-        self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com:8500')
+        self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
         self.assertEqual(cp.state, UNASSIGNED)
 
     def test_parse_without_consul_agent(self):
@@ -874,7 +874,7 @@ class TestContainerPilotConfig(unittest.TestCase):
             self.assertEqual(config['consul'], 'localhost:8500')
             cmd = config['coprocesses'][0]['command']
             host_cfg_idx = cmd.index('-retry-join') + 1
-            self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com:8500')
+            self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
 
 
 class TestMantaConfig(unittest.TestCase):
