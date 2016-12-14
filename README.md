@@ -113,6 +113,7 @@ Pass these variables via an `_env` file. The included `setup.sh` can be used to 
 
 These variables are optional but you most likely want them:
 
+- `SERVICE_NAME`: the name by which this instance will register itself in consul. If you do not provide one, defaults to `"mysql"`.
 - `MYSQL_REPL_USER`: this user will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_REPL_PASSWORD`: this password will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_DATABASE`: create this database on startup if it doesn't already exist. The `MYSQL_USER` user will be granted superuser access to that DB.

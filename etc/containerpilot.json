@@ -6,7 +6,7 @@
   },
   "services": [
     {
-      "name": "mysql",
+      "name": "{{ if .SERVICE_NAME }}{{ .SERVICE_NAME }}{{ else }}mysql{{ end }}",
       "port": 3306,
       "health": "python /usr/local/bin/manage.py health",
       "poll": 5,
