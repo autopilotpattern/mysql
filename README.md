@@ -122,7 +122,7 @@ These variables are optional but you most likely want them:
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
 
-- `PRIMARY_KEY`: The key used to record a lock on what node is primary. (Defaults to `mysql-primary`.)
+- `PRIMARY_KEY`: The key used to record a lock on what node is primary. (Defaults to `${SERVICE_NAME}-primary`.)
 - `BACKUP_LOCK_KEY`: The key used to record a lock on a running snapshot. (Defaults to `mysql-backup-runninbg`.)
 - `LAST_BACKUP_KEY`: The key used to store the path and timestamp of the most recent backup. (Defaults to `mysql-last-backup`.)
 - `LAST_BINLOG_KEY`: The key used to store the filename of the most recent binlog file on the primary. (Defaults to `mysql-last-binlog`.)

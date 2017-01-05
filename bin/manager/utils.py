@@ -109,7 +109,7 @@ def to_flag(val):
 
 
 # env values for keys
-PRIMARY_KEY = env('PRIMARY_KEY', 'mysql-primary')
+PRIMARY_KEY = env('PRIMARY_KEY', env('SERVICE_NAME','mysql')+'-primary')
 LAST_BACKUP_KEY = env('LAST_BACKUP_KEY', 'mysql-last-backup')
 BACKUP_LOCK_KEY = env('BACKUP_LOCK_KEY', 'mysql-backup-running')
 LAST_BINLOG_KEY = env('LAST_BINLOG_KEY', 'mysql-last-binlog')
