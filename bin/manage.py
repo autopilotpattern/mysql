@@ -77,7 +77,7 @@ class Node(object):
 
     def is_replica(self):
         """ check if we're the replica """
-        return not self.is_primary()
+        return not self.is_primary() and self.cp.state != UNASSIGNED
 
     def is_snapshot_node(self):
         """ check if we're the node that's going to execute the snapshot """
