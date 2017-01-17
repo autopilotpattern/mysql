@@ -171,7 +171,7 @@ def on_change(node):
         log.debug('[on_change] this node is primary, no failover required.')
         if node.cp.update():
             # we're ignoring the lock here intentionally
-            node.consul.put(PRIMARY_KEY, node.hostname)
+            node.consul.put(PRIMARY_KEY, node.name)
             node.cp.reload()
         return
 
@@ -208,15 +208,15 @@ def on_change(node):
     # sure we refresh .state from mysqld/Consul
     node.cp.state = UNASSIGNED
     if node.is_primary():
-        log.info('[on_change] node %s is primary after failover', node.hostname)
+        log.info('[on_change] node %s is primary after failover', node.name)
         if node.cp.update():
             # we're intentionally ignoring the advisory lock here
-            ok = node.consul.put(PRIMARY_KEY, node.hostname)
-            log.debug('[on_change] %s obtained lock: %s', node.hostname, ok)
+            ok = node.consul.put(PRIMARY_KEY, node.name)
+            log.debug('[on_change] %s obtained lock: %s', node.name, ok)
             node.cp.reload()
         return
     elif node.is_replica():
-        log.info('[on_change] node %s is replica after failover', node.hostname)
+        log.info('[on_change] node %s is replica after failover', node.name)
 
     if node.cp.state == UNASSIGNED:
         log.error('[on_change] this node is neither primary or replica '
