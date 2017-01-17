@@ -72,6 +72,12 @@ class Node(object):
         except (UnknownPrimary, ValueError) as ex:
             log.debug('could not determine primary via Consul: %s', ex)
 
+        # am I listed in the Consul PRIMARY_KEY??
+        _, primary_name = self.consul.read_lock(PRIMARY_KEY)
+        if primary_name == self.name:
+            self.cp.state = PRIMARY
+            return True
+
         self.cp.state = UNASSIGNED
         return False
 
