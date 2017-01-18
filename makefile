@@ -130,7 +130,7 @@ unit-test:
 		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
 		autopilotpattern/mysql:$(TAG) \
-		python test.py
+		$(PYTHON) test.py
 
 ## Tear down all project containers
 teardown:

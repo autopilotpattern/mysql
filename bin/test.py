@@ -411,6 +411,7 @@ class TestOnChange(unittest.TestCase):
 
         self.node.consul.get_primary.side_effect = consul_get_primary_results()
         self.node.consul.lock.return_value = True
+        self.node.consul.read_lock.return_value = None, None
         self.node.consul.client.health.service.return_value = [0, [
             {'Service' : {'ID': 'node1', 'Address': '192.168.1.101'}},
             {'Service' : {'ID': 'node3', 'Address': '192.168.1.103'}}
@@ -448,6 +449,7 @@ class TestOnChange(unittest.TestCase):
 
         self.node.consul.get_primary.side_effect = consul_get_primary_results()
         self.node.consul.lock_failover.return_value = True
+        self.node.consul.read_lock.return_value = None, None
         self.node.consul.client.health.service.return_value = [0, [
             {'Service' : {'ID': 'node1', 'Address': '192.168.1.101'}},
             {'Service' : {'ID': 'node3', 'Address': '192.168.1.102'}}
@@ -475,6 +477,7 @@ class TestOnChange(unittest.TestCase):
 
         self.node.consul.get_primary.side_effect = UnknownPrimary()
         self.node.consul.lock_failover.return_value = True
+        self.node.consul.read_lock.return_value = None, None
         self.node.consul.client.health.service.return_value = [0, [
             {'Service' : {'ID': 'node1', 'Address': '192.168.1.101'}},
             {'Service' : {'ID': 'node3', 'Address': '192.168.1.102'}}
@@ -483,8 +486,8 @@ class TestOnChange(unittest.TestCase):
         try:
             manage.on_change(self.node)
             self.fail('Expected unhandled exception but did not.')
-        except:
-            pass
+        except Exception as ex:
+            self.assertEqual(ex.message, 'fail')
 
         self.assertEqual(self.node.consul.get_primary.call_count, 2)
         self.node.consul.lock_failover.assert_called_once()
@@ -835,7 +838,7 @@ class TestContainerPilotConfig(unittest.TestCase):
         self.assertEqual(cp.config['consul'], 'localhost:8500')
         cmd = cp.config['coprocesses'][0]['command']
         host_cfg_idx = cmd.index('-retry-join') + 1
-        self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com:8500')
+        self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
         self.assertEqual(cp.state, UNASSIGNED)
 
     def test_parse_without_consul_agent(self):
@@ -874,7 +877,7 @@ class TestContainerPilotConfig(unittest.TestCase):
             self.assertEqual(config['consul'], 'localhost:8500')
             cmd = config['coprocesses'][0]['command']
             host_cfg_idx = cmd.index('-retry-join') + 1
-            self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com:8500')
+            self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
 
 
 class TestMantaConfig(unittest.TestCase):

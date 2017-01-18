@@ -117,6 +117,8 @@ class Consul(object):
         """
         lock = self.client.kv.get(key)
         try:
+            if not lock[1]:
+                raise KeyError
             session_lock = lock[1]['Session']
             value = lock[1]['Value']
             return session_lock, value

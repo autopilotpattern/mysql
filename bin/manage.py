@@ -72,12 +72,18 @@ class Node(object):
         except (UnknownPrimary, ValueError) as ex:
             log.debug('could not determine primary via Consul: %s', ex)
 
+        # am I listed in the Consul PRIMARY_KEY??
+        _, primary_name = self.consul.read_lock(PRIMARY_KEY)
+        if primary_name == self.name:
+            self.cp.state = PRIMARY
+            return True
+
         self.cp.state = UNASSIGNED
         return False
 
     def is_replica(self):
         """ check if we're the replica """
-        return not self.is_primary()
+        return not self.is_primary() and self.cp.state != UNASSIGNED
 
     def is_snapshot_node(self):
         """ check if we're the node that's going to execute the snapshot """
@@ -165,7 +171,7 @@ def on_change(node):
         log.debug('[on_change] this node is primary, no failover required.')
         if node.cp.update():
             # we're ignoring the lock here intentionally
-            node.consul.put(PRIMARY_KEY, node.hostname)
+            node.consul.put(PRIMARY_KEY, node.name)
             node.cp.reload()
         return
 
@@ -202,15 +208,15 @@ def on_change(node):
     # sure we refresh .state from mysqld/Consul
     node.cp.state = UNASSIGNED
     if node.is_primary():
-        log.info('[on_change] node %s is primary after failover', node.hostname)
+        log.info('[on_change] node %s is primary after failover', node.name)
         if node.cp.update():
             # we're intentionally ignoring the advisory lock here
-            ok = node.consul.put(PRIMARY_KEY, node.hostname)
-            log.debug('[on_change] %s obtained lock: %s', node.hostname, ok)
+            ok = node.consul.put(PRIMARY_KEY, node.name)
+            log.debug('[on_change] %s obtained lock: %s', node.name, ok)
             node.cp.reload()
         return
     elif node.is_replica():
-        log.info('[on_change] node %s is replica after failover', node.hostname)
+        log.info('[on_change] node %s is replica after failover', node.name)
 
     if node.cp.state == UNASSIGNED:
         log.error('[on_change] this node is neither primary or replica '
@@ -308,6 +314,7 @@ def assert_initialized_for_state(node):
             os.rmdir(LOCK_PATH)
             sys.exit(1)
         if node.cp.update():
+            os.rmdir(LOCK_PATH)
             node.cp.reload()
             # this is racy with the SIGHUP that ContainerPilot just got
             # sent, but if the Consul agent shuts down quickly enough we
