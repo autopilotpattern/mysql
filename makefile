@@ -121,6 +121,13 @@ test-local-docker:
 		$(LOCALRUN) $(PYTHON) tests.py
 
 ## Run the unit tests inside the mysql container
+ci-unit-test:
+	docker run --rm -w /usr/local/bin \
+		-e LOG_LEVEL=DEBUG \
+		autopilotpattern/mysql:$(TAG) \
+		$(PYTHON) test.py
+
+## Run the unit tests inside the mysql container w/ source bind-mounted
 unit-test:
 	docker run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
@@ -129,6 +136,7 @@ unit-test:
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
 		autopilotpattern/mysql:$(TAG) \
 		$(PYTHON) test.py
+
 
 ## Tear down all project containers
 teardown:
