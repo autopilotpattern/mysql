@@ -3,8 +3,6 @@
 # directly works just fine without this.
 
 MAKEFLAGS += --warn-undefined-variables
-SHELL := /bin/bash
-.SHELLFLAGS := -eu -o pipefail
 .DEFAULT_GOAL := build
 .PHONY: build ship test help
 
