@@ -113,6 +113,7 @@ Pass these variables via an `_env` file. The included `setup.sh` can be used to 
 
 These variables are optional but you most likely want them:
 
+- `SERVICE_NAME`: the name by which this instance will register itself in consul. If you do not provide one, defaults to `"mysql"`.
 - `MYSQL_REPL_USER`: this user will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_REPL_PASSWORD`: this password will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_DATABASE`: create this database on startup if it doesn't already exist. The `MYSQL_USER` user will be granted superuser access to that DB.
@@ -121,7 +122,7 @@ These variables are optional but you most likely want them:
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
 
-- `PRIMARY_KEY`: The key used to record a lock on what node is primary. (Defaults to `mysql-primary`.)
+- `PRIMARY_KEY`: The key used to record a lock on what node is primary. (Defaults to `${SERVICE_NAME}-primary`.)
 - `BACKUP_LOCK_KEY`: The key used to record a lock on a running snapshot. (Defaults to `mysql-backup-runninbg`.)
 - `LAST_BACKUP_KEY`: The key used to store the path and timestamp of the most recent backup. (Defaults to `mysql-last-backup`.)
 - `LAST_BINLOG_KEY`: The key used to store the filename of the most recent binlog file on the primary. (Defaults to `mysql-last-binlog`.)

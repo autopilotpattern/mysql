@@ -34,6 +34,10 @@ class ContainerPilot(object):
         # override the attributes directly in the resulting dict
         cfg = cfg.replace('[{{ if .CONSUL_AGENT }}', '[')
         cfg = cfg.replace('}{{ end }}', '}')
+
+        # remove templating for SERVICE_NAME
+        service_name = env('SERVICE_NAME', 'mysql')
+        cfg = cfg.replace('{{ if .SERVICE_NAME }}{{ .SERVICE_NAME }}{{ else }}mysql{{ end }}',service_name)
         config = json.loads(cfg)
 
         if env('CONSUL_AGENT', False, envs, to_flag):

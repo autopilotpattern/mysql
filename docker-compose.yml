@@ -13,6 +13,7 @@ mysql:
       - CONTAINERPILOT=file:///etc/containerpilot.json
       - CONSUL_AGENT=1
       - LOG_LEVEL=INFO
+      - SERVICE_NAME=mysql
 
 consul:
     image: consul:0.7.1
