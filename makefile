@@ -9,6 +9,7 @@ MAKEFLAGS += --warn-undefined-variables
 # we get these from CI environment if available, otherwise from git
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD)
 GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
+WORKSPACE ?= $(shell pwd)
 
 namespace ?= autopilotpattern
 tag := branch-$(shell basename $(GIT_BRANCH))
@@ -22,21 +23,6 @@ help:
 # ------------------------------------------------
 # Target environment configuration
 
-ifndef DOCKER_HOST
-DOCKER_CONFIG := \
-	-v $(shell pwd)/_env:/src/_env \
-	-v /var/run/docker.sock:/var/run/docker.sock \
-	-e TAG=$(tag)
-else
-DOCKER_CONFIG := \
-	-e COMPOSE_HTTP_TIMEOUT=300 \
-	-e DOCKER_TLS_VERIFY=$(DOCKER_TLS_VERIFY) \
-	-e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH) \
-	-e DOCKER_HOST=$(DOCKER_HOST) \
-	-e TRITON_PROFILE=$(TRITON_PROFILE) \
-	-e TAG=$(tag)
-endif
-
 dockerLocal := DOCKER_HOST= DOCKER_TLS_VERIFY= DOCKER_CERT_PATH= docker
 
 # if you pass `TRACE=1` into the call to `make` then the Python tests will
@@ -46,15 +32,6 @@ python := python
 else
 python := python -m trace
 endif
-
-# TODO: we'll need these configured in our Jenkins CI job too
-MANTA_LOGIN ?= triton_mysql
-MANTA_ROLE ?= triton_mysql
-MANTA_POLICY ?= triton_mysql
-MANTA_CONFIG := \
-	-e MANTA_USER=$(MANTA_USER) \
-	-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
-	-e MANTA_ROLE=$(MANTA_ROLE)
 
 # ------------------------------------------------
 # Container builds
@@ -70,7 +47,7 @@ test-runner:
 ## Push the current application container images to the Docker Hub
 push:
 	$(dockerLocal) push $(image):$(tag)
-	$(dockerLocal) build -f tests/Dockerfile -t=$(test_image):$(tag) .
+	$(dockerLocal) push $(test_image):$(tag)
 
 ## Tag the current images as 'latest' and push them to the Docker Hub
 ship:
@@ -79,7 +56,6 @@ ship:
 	$(dockerLocal) tag $(image):$(tag) $(image):latest
 	$(dockerLocal) push $(image):$(tag)
 	$(dockerLocal) push $(image):latest
-
 
 # ------------------------------------------------
 # Test running
@@ -93,7 +69,7 @@ pull:
 
 ## Run the unit tests inside the mysql container
 test:
-	$(dockerLocal) run --rm -w /usr/local/bin \
+	docker run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
 		$(image):$(tag) \
 		$(python) test.py
@@ -108,14 +84,29 @@ test-src:
 		$(image):$(tag) \
 		$(python) test.py
 
-## Deploy integration test runner to the Docker/Triton environment.
+$(DOCKER_CERT_PATH)/key.pub:
+	ssh-keygen -y -f $(DOCKER_CERT_PATH)/key.pem > $(DOCKER_CERT_PATH)/key.pub
+
+## For Jenkins test runner only: make sure we have public keys available
+keys: $(DOCKER_CERT_PATH)/key.pub
+
+## Run the integration test runner. Runs locally but targets Docker/Triton.
 integration-test:
-	docker run -it --rm \
+	$(dockerLocal) run -it --rm \
+		-e TAG=$(tag) \
+		-e COMPOSE_HTTP_TIMEOUT=300 \
+		-e DOCKER_HOST=$(DOCKER_HOST) \
+		-e DOCKER_TLS_VERIFY=1 \
+		-e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH) \
+		-e MANTA_KEY_ID=$(shell ssh-keygen -l -E md5 -f $(DOCKER_CERT_PATH)/key.pub | awk '{print substr($$2,5)}') \
+		-e MANTA_URL=$(MANTA_URL) \
+		-e MANTA_USER=$(MANTA_USER) \
+		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
+		-e MANTA_ROLE=$(MANTA_ROLE)
+		-v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH) \
+		-v $(shell pwd)/tests/tests.py:/src/tests.py \
 		-w /src \
-		$(DOCKER_CONFIG) \
-		$(MANTA_CONFIG) \
-		$(test_image):$(tag) \
-		python3 tests.py
+	$(test_image):$(tag) python3 tests.py
 
 
 # -------------------------------------------------------
@@ -133,6 +124,11 @@ logs:
 	docker logs my_mysql_3 > mysql3.log 2>&1
 
 # -------------------------------------------------------
+
+# TODO: we'll need these configured in our Jenkins CI job too
+MANTA_LOGIN ?= triton_mysql
+MANTA_ROLE ?= triton_mysql
+MANTA_POLICY ?= triton_mysql
 
 ## Create user and policies for Manta backups
 manta:
@@ -171,13 +167,13 @@ cleanup:
 
 ## Print environment for build debugging
 debug:
+	@echo WORKSPACE=$(WORKSPACE)
 	@echo GIT_COMMIT=$(GIT_COMMIT)
 	@echo GIT_BRANCH=$(GIT_BRANCH)
 	@echo namespace=$(namespace)
 	@echo tag=$(tag)
 	@echo image=$(image)
 	@echo test_image=$(test_image)
-	@echo DOCKER_CONFIG=$(DOCKER_CONFIG)
 	@echo python=$(python)
 
 check_var = $(foreach 1,$1,$(__check_var))
