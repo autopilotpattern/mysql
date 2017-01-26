@@ -69,7 +69,7 @@ pull:
 
 ## Run the unit tests inside the mysql container
 test:
-	docker run --rm -w /usr/local/bin \
+	$(dockerLocal) run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
 		$(image):$(tag) \
 		$(python) test.py
