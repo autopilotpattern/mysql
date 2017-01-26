@@ -5,9 +5,11 @@ RUN apk update \
 RUN npm install -g triton json
 
 # install dependencies
-COPY tests/testing/requirements.txt /tmp/requirements.txt
 COPY tests/testing/testcases.py /src/testcases.py
-RUN pip3 install -r /tmp/requirements.txt
+RUN pip3 install \
+    docker-compose==1.10.0 \
+    python-Consul==0.4.7 \
+    IPy==0.83
 
 # install tests
 COPY tests/tests.py /src/tests.py
