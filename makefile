@@ -12,8 +12,8 @@ GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 
 namespace ?= autopilotpattern
 tag := branch-$(shell basename $(GIT_BRANCH))
-image := $(namespace)/mysql:$(tag)
-test_image := $(namespace)/mysql-testrunner:$(tag)
+image := $(namespace)/mysql
+test_image := $(namespace)/mysql-testrunner
 
 ## Display this help message
 help:
@@ -61,7 +61,7 @@ MANTA_CONFIG := \
 
 ## Builds the application container image locally
 build: test-runner
-	$(dockerLocal) build -t=$(image) .
+	$(dockerLocal) build -t=$(image):$(tag) .
 
 ## Build the test running container
 test-runner:
@@ -69,16 +69,16 @@ test-runner:
 
 ## Push the current application container images to the Docker Hub
 push:
-	$(dockerLocal) push $(image)
+	$(dockerLocal) push $(image):$(tag)
 	$(dockerLocal) build -f tests/Dockerfile -t=$(test_image):$(tag) .
 
 ## Tag the current images as 'latest' and push them to the Docker Hub
 ship:
-	$(dockerLocal) tag $(image) $(namespace)/mysql:latest
+	$(dockerLocal) tag $(image):$(tag) $(image):latest
 	$(dockerLocal) tag $(test_image):$(tag) $(test_image):latest
-	$(dockerLocal) tag $(image) $(namespace)/mysql:latest
-	$(dockerLocal) push $(image)
-	$(dockerLocal) push $(namespace)/mysql:latest
+	$(dockerLocal) tag $(image):$(tag) $(image):latest
+	$(dockerLocal) push $(image):$(tag)
+	$(dockerLocal) push $(image):latest
 
 
 # ------------------------------------------------
@@ -95,7 +95,7 @@ pull:
 test:
 	$(dockerLocal) run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
-		$(image) \
+		$(image):$(tag) \
 		$(python) test.py
 
 ## Run the unit tests with source mounted to the container for local dev
@@ -105,7 +105,7 @@ test-src:
 		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
 		-e LOG_LEVEL=DEBUG \
-		$(image) \
+		$(image):$(tag) \
 		$(python) test.py
 
 ## Deploy integration test runner to the Docker/Triton environment.
@@ -114,7 +114,8 @@ integration-test:
 		-w /src \
 		$(DOCKER_CONFIG) \
 		$(MANTA_CONFIG) \
-		$(test_image):$(tag) python3 tests.py
+		$(test_image):$(tag) \
+		python3 tests.py
 
 
 # -------------------------------------------------------
