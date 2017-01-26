@@ -94,6 +94,8 @@ keys: $(DOCKER_CERT_PATH)/key.pub
 
 ## Run the integration test runner. Runs locally but targets Triton.
 integration-test:
+	$(call check_var, TRITON_ACCOUNT TRITON_DC, \
+		required to run integration tests on Triton.)
 	$(dockerLocal) run --rm \
 		-e TAG=$(tag) \
 		-e COMPOSE_HTTP_TIMEOUT=300 \
@@ -105,7 +107,7 @@ integration-test:
 		-e MANTA_USER=$(MANTA_USER) \
 		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
 		-e MANTA_ROLE=$(MANTA_ROLE) \
-		-e CONSUL=mysql-consul.svc.${TRITON_ACCOUNT}.${TRITON_DC}.cns.joyent.com \
+		-e CONSUL=mysql-consul.svc.$(TRITON_ACCOUNT).$(TRITON_DC).cns.joyent.com \
 		$(SDC_KEYS_VOL) -w /src \
 		$(test_image):$(tag) python3 tests.py
 
