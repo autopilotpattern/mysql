@@ -106,7 +106,7 @@ integration-test:
 		-e MANTA_ROLE=$(MANTA_ROLE) \
 		-v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH) \
 		-w /src \
-	$(test_image):$(tag) python3 tests.py
+		$(test_image):$(tag) python3 tests.py
 
 
 # -------------------------------------------------------
