@@ -8,7 +8,7 @@ MAKEFLAGS += --warn-undefined-variables
 
 # we get these from CI environment if available, otherwise from git
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD)
-GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
+GIT_BRANCH ?= $(shell $$(basename git rev-parse --abbrev-ref HEAD))
 
 namespace ?= autopilotpattern
 tag := branch-$(GIT_BRANCH)
