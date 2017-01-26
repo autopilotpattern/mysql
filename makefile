@@ -88,8 +88,9 @@ $(DOCKER_CERT_PATH)/key.pub:
 	ssh-keygen -y -f $(DOCKER_CERT_PATH)/key.pem > $(DOCKER_CERT_PATH)/key.pub
 
 ## For Jenkins test runner only: make sure we have public keys available
-keys: $(DOCKER_CERT_PATH)/key.pub
 
+SDC_KEYS_VOL ?= -v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH)
+keys: $(DOCKER_CERT_PATH)/key.pub
 
 ## Run the integration test runner. Runs locally but targets Docker/Triton.
 integration-test:
@@ -104,10 +105,8 @@ integration-test:
 		-e MANTA_USER=$(MANTA_USER) \
 		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
 		-e MANTA_ROLE=$(MANTA_ROLE) \
-		-v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH) \
-		-w /src \
+		$(SDC_KEYS_VOL) -w /src \
 		$(test_image):$(tag) python3 tests.py
-
 
 # -------------------------------------------------------
 

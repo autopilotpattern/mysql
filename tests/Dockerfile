@@ -10,10 +10,6 @@ RUN pip3 install \
     python-Consul==0.4.7 \
     IPy==0.83
 
-# need this user to be the one we mount keys for
-RUN adduser -D -u 1000 jenkins
-USER jenkins
-
 # install tests
 COPY tests/testing/testcases.py /src/testcases.py
 COPY tests/tests.py /src/tests.py
