@@ -92,7 +92,7 @@ $(DOCKER_CERT_PATH)/key.pub:
 SDC_KEYS_VOL ?= -v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH)
 keys: $(DOCKER_CERT_PATH)/key.pub
 
-## Run the integration test runner. Runs locally but targets Docker/Triton.
+## Run the integration test runner. Runs locally but targets Triton.
 integration-test:
 	$(dockerLocal) run --rm \
 		-e TAG=$(tag) \
@@ -105,6 +105,7 @@ integration-test:
 		-e MANTA_USER=$(MANTA_USER) \
 		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
 		-e MANTA_ROLE=$(MANTA_ROLE) \
+		-e CONSUL=mysql-consul.svc.${TRITON_ACCOUNT}.${TRITON_DC}.cns.joyent.com \
 		$(SDC_KEYS_VOL) -w /src \
 		$(test_image):$(tag) python3 tests.py
 
