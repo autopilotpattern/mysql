@@ -102,7 +102,7 @@ integration-test:
 		-e DOCKER_HOST=$(DOCKER_HOST) \
 		-e DOCKER_TLS_VERIFY=1 \
 		-e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH) \
-		-e MANTA_KEY_ID=$(shell ssh-keygen -l -f $(DOCKER_CERT_PATH)/key.pub | awk '{print substr($$2,5)}') \
+		-e MANTA_KEY_ID=$(shell ssh-keygen -l -f $(DOCKER_CERT_PATH)/key.pub | awk '{print $$2}') \
 		-e MANTA_URL=$(MANTA_URL) \
 		-e MANTA_USER=$(MANTA_USER) \
 		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
