@@ -90,6 +90,7 @@ $(DOCKER_CERT_PATH)/key.pub:
 ## For Jenkins test runner only: make sure we have public keys available
 keys: $(DOCKER_CERT_PATH)/key.pub
 
+
 ## Run the integration test runner. Runs locally but targets Docker/Triton.
 integration-test:
 	$(dockerLocal) run -it --rm \
@@ -102,7 +103,7 @@ integration-test:
 		-e MANTA_URL=$(MANTA_URL) \
 		-e MANTA_USER=$(MANTA_USER) \
 		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
-		-e MANTA_ROLE=$(MANTA_ROLE)
+		-e MANTA_ROLE=$(MANTA_ROLE) \
 		-v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH) \
 		-v $(shell pwd)/tests/tests.py:/src/tests.py \
 		-w /src \
@@ -126,6 +127,9 @@ logs:
 # -------------------------------------------------------
 
 # TODO: we'll need these configured in our Jenkins CI job too
+MANTA_URL ?= https://us-east.manta.joyent.com
+MANTA_USER ?= triton_mysql
+MANTA_SUBUSER ?= triton_mysql
 MANTA_LOGIN ?= triton_mysql
 MANTA_ROLE ?= triton_mysql
 MANTA_POLICY ?= triton_mysql
