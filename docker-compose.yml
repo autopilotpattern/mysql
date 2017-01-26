@@ -1,9 +1,5 @@
-version: '2.1'
-
-services:
-
-  mysql:
-    image: autopilotpattern/mysql:${TAG:-latest}
+mysql:
+    image: autopilotpattern/mysql:${TAG}
     mem_limit: 4g
     restart: always
     # expose for linking, but each container gets a private IP for
@@ -19,7 +15,7 @@ services:
       - LOG_LEVEL=INFO
       - SERVICE_NAME=mysql
 
-  consul:
+consul:
     image: consul:0.7.1
     command: >
       agent -server -client=0.0.0.0 -bootstrap -ui
