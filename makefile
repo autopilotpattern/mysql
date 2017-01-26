@@ -105,7 +105,6 @@ integration-test:
 		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
 		-e MANTA_ROLE=$(MANTA_ROLE) \
 		-v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH) \
-		-v $(shell pwd)/tests/tests.py:/src/tests.py \
 		-w /src \
 	$(test_image):$(tag) python3 tests.py
 
