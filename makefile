@@ -93,7 +93,7 @@ keys: $(DOCKER_CERT_PATH)/key.pub
 
 ## Run the integration test runner. Runs locally but targets Docker/Triton.
 integration-test:
-	$(dockerLocal) run -it --rm \
+	$(dockerLocal) run --rm \
 		-e TAG=$(tag) \
 		-e COMPOSE_HTTP_TIMEOUT=300 \
 		-e DOCKER_HOST=$(DOCKER_HOST) \
