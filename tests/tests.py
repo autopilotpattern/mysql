@@ -27,17 +27,6 @@ class MySQLStackTest(AutopilotPatternTest):
         the test environment, we'll use that, otherwise we have to
         generate it from the environment.
         """
-        # update tag
-        tag = os.environ.get('TAG', 'latest')
-        with open('docker-compose.yml', 'r') as f:
-            compose_content = f.read()
-        compose_content = compose_content.replace(
-            'autopilotpattern/mysql:latest',
-            'autopilotpattern/mysql:{}'.format(tag)
-            )
-        with open('docker-compose.yml', 'w') as f:
-            f.write(compose_content)
-
         if not os.path.isfile('_env'):
             print('generating _env')
             os.environ['MYSQL_USER'] = self.user = 'mytestuser'
