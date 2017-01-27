@@ -13,11 +13,9 @@ import time
 import unittest
 import uuid
 
-from testcases import AutopilotPatternTest, WaitTimeoutError
+from testcases import AutopilotPatternTest, WaitTimeoutError, dump_environment_to_file
 
-UNIT_ONLY=False
 
-@unittest.skipIf(UNIT_ONLY, "running only unit tests")
 class MySQLStackTest(AutopilotPatternTest):
 
     project_name = 'my'
@@ -25,50 +23,22 @@ class MySQLStackTest(AutopilotPatternTest):
     def setUp(self):
         """
         autopilotpattern/mysql setup.sh writes an _env file with a CNS
-        entry and account info for Manta. In local-only testing this fails
-        so we need to set up a temporary remote Docker env
+        entry and account info for Manta. If this has been mounted from
+        the test environment, we'll use that, otherwise we have to
+        generate it from the environment.
         """
-        self.set_remote_docker_env()
+        if not os.path.isfile('_env'):
+            print('generating _env')
+            os.environ['MYSQL_USER'] = self.user = 'mytestuser'
+            os.environ['MYSQL_PASSWORD'] = self.passwd = gen_password()
+            os.environ['MYSQL_DATABASE'] = self.db = 'mytestdb'
+            os.environ['MYSQL_REPL_USER'] = self.repl_user = 'myrepluser'
+            os.environ['MYSQL_REPL_PASSWORD'] = self.repl_passwd = gen_password()
+            with open(os.environ['DOCKER_CERT_PATH'] + '/key.pem') as key_file:
+                manta_key = '#'.join([line.strip() for line in key_file])
+            os.environ['MANTA_PRIVATE_KEY'] = manta_key
 
-        try:
-            home = expanduser("~")
-            key = '{}/.ssh/id_rsa'.format(home)
-            self.run_script('ln', '-s', '/tmp/ssh/TritonTestingKey', key)
-            pub = self.run_script('/usr/bin/ssh-keygen','-y','-f', key)
-            with open('{}.pub'.format(key), 'w') as f:
-                f.write(pub)
-            self.run_script('/src/setup.sh', '{}/.ssh/id_rsa'.format(home))
-        except subprocess.CalledProcessError as ex:
-            self.fail(ex.output)
-
-        _manta_url =os.environ.get('MANTA_URL', 'https://us-east.manta.joyent.com')
-        _manta_user = os.environ.get('MANTA_USER', 'triton_mysql')
-        _manta_subuser = os.environ.get('MANTA_SUBUSER', 'triton_mysql')
-        _manta_role = os.environ.get('MANTA_ROLE', 'triton_mysql')
-        _manta_bucket = os.environ.get('MANTA_BUCKET',
-                                       '/{}/stor/{}'.format(_manta_user, _manta_subuser))
-
-        self.update_env_file(
-            '_env', (
-                ('MYSQL_PASSWORD', gen_password()),
-                ('MYSQL_REPL_PASSWORD', gen_password()),
-                ('MANTA_URL', _manta_url),
-                ('MANTA_USER', _manta_user),
-                ('MANTA_SUBUSER', _manta_subuser),
-                ('MANTA_ROLE', _manta_role),
-                ('MANTA_BUCKET', _manta_bucket),
-            )
-        )
-
-        self.restore_local_docker_env()
-
-        # read-in the env file so we can use it in tests
-        env = self.read_env_file('_env')
-        self.user = env.get('MYSQL_USER')
-        self.passwd = env.get('MYSQL_PASSWORD')
-        self.db = env.get('MYSQL_DATABASE')
-        self.repl_user = env.get('MYSQL_REPL_USER')
-        self.repl_passwd = env.get('MYSQL_REPL_PASSWORD')
+            dump_environment_to_file('_env')
 
     def test_replication_and_failover(self):
         """
@@ -236,8 +206,4 @@ def gen_password():
 
 
 if __name__ == "__main__":
-
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "unit":
-            UNIT_ONLY=True
     unittest.main(failfast=True)

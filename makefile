@@ -6,137 +6,112 @@ MAKEFLAGS += --warn-undefined-variables
 .DEFAULT_GOAL := build
 .PHONY: build ship test help
 
-MANTA_LOGIN ?= triton_mysql
-MANTA_ROLE ?= triton_mysql
-MANTA_POLICY ?= triton_mysql
+# we get these from CI environment if available, otherwise from git
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD)
+GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
+WORKSPACE ?= $(shell pwd)
+
+namespace ?= autopilotpattern
+tag := branch-$(shell basename $(GIT_BRANCH))
+image := $(namespace)/mysql
+test_image := $(namespace)/mysql-testrunner
 
 ## Display this help message
 help:
 	@awk '/^##.*$$/,/[a-zA-Z_-]+:/' $(MAKEFILE_LIST) | awk '!(NR%2){print $$0p}{p=$$0}' | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' | sort
 
 # ------------------------------------------------
+# Target environment configuration
+
+dockerLocal := DOCKER_HOST= DOCKER_TLS_VERIFY= DOCKER_CERT_PATH= docker
+
+# if you pass `TRACE=1` into the call to `make` then the Python tests will
+# run under the `trace` module (provides detailed call logging)
+ifndef TRACE
+python := python
+else
+python := python -m trace
+endif
+
+# ------------------------------------------------
 # Container builds
 
-# we get these from shippable if available, otherwise from git
-COMMIT ?= $(shell git rev-parse --short HEAD)
-BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
-TAG := $(BRANCH)-$(COMMIT)
+## Builds the application container image locally
+build: test-runner
+	$(dockerLocal) build -t=$(image):$(tag) .
 
-## Builds the application container image
-build:
-	docker build -t=autopilotpattern/mysql:$(TAG) .
+## Build the test running container
+test-runner:
+	$(dockerLocal) build -f tests/Dockerfile -t=$(test_image):$(tag) .
 
-tag:
-	docker tag autopilotpattern/mysql:$(TAG) autopilotpattern/mysql:latest
+## Push the current application container images to the Docker Hub
+push:
+	$(dockerLocal) push $(image):$(tag)
+	$(dockerLocal) push $(test_image):$(tag)
 
-## Pushes the application container image to the Docker Hub
-ship: tag
-	docker push autopilotpattern/mysql:$(TAG)
-	docker push autopilotpattern/mysql:latest
-
+## Tag the current images as 'latest' and push them to the Docker Hub
+ship:
+	$(dockerLocal) tag $(image):$(tag) $(image):latest
+	$(dockerLocal) tag $(test_image):$(tag) $(test_image):latest
+	$(dockerLocal) tag $(image):$(tag) $(image):latest
+	$(dockerLocal) push $(image):$(tag)
+	$(dockerLocal) push $(image):latest
 
 # ------------------------------------------------
 # Test running
 
 LOG_LEVEL ?= INFO
-KEY := ~/.ssh/TritonTestingKey
 
-# if you pass `TRACE=1` into the call to `make` then the Python tests will
-# run under the `trace` module (provides detailed call logging)
-PYTHON := $(shell if [ -z ${TRACE} ]; then echo "python"; else echo "python -m trace"; fi)
-
-# sets up the Docker context for running the build container locally
-# `make test` runs in the build container on Shippable where the boot script
-# will pull the source from GitHub first, but if we want to debug locally
-# we'll need to mount the local source into the container.
-# TODO: remove mount to ~/src/autopilotpattern/testing
-LOCALRUN := \
-	-e PATH=/root/venv/3.5/bin:/usr/bin:/bin \
-	-e COMPOSE_HTTP_TIMEOUT=300 \
-	-e LOG_LEVEL=$(LOG_LEVEL) \
-	-w /src \
-	-v ~/.triton:/root/.triton \
-	-v ~/src/autopilotpattern/testing/testcases.py:/root/venv/3.5/lib/python3.5/site-packages/testcases.py \
-	-v $(shell pwd)/tests/tests.py:/src/tests.py \
-	-v $(shell pwd)/docker-compose.yml:/src/docker-compose.yml \
-	-v $(shell pwd)/local-compose.yml:/src/local-compose.yml \
-	-v $(shell pwd)/makefile:/src/makefile \
-	-v $(shell pwd)/setup.sh:/src/setup.sh \
-	-v ~/.ssh/timgross-joyent_id_rsa:/tmp/ssh/TritonTestingKey \
-	joyent/test
-
-MANTA_CONFIG := \
-	-e MANTA_USER=timgross \
-	-e MANTA_SUBUSER=triton_mysql \
-	-e MANTA_ROLE=triton_mysql
-
-## Build the test running container
-test-runner:
-	docker build -f tests/Dockerfile -t="joyent/test" .
-
-# configure triton profile
-~/.triton/profiles.d/us-sw-1.json:
-	{ \
-	  cp /tmp/ssh/TritonTestingKey $(KEY) ;\
-	  ssh-keygen -y -f $(KEY) > $(KEY).pub ;\
-	  FINGERPRINT=$$(ssh-keygen -l -f $(KEY) | awk '{print $$2}' | sed 's/MD5://') ;\
-	  printf '{"url": "https://us-sw-1.api.joyent.com", "name": "TritonTesting", "account": "timgross", "keyId": "%s"}' $${FINGERPRINT} > profile.json ;\
-	}
-	cat profile.json | triton profile create -f -
-	-rm profile.json
-
-# TODO: replace this user w/ a user specifically for testing
-## Run the build container (on Shippable) and deploy tests on Triton
-test: ~/.triton/profiles.d/us-sw-1.json
-	cp tests/tests.py . && \
-		DOCKER_TLS_VERIFY=1 \
-		DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
-		DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
-		TRITON_PROFILE=us-sw-1 \
-		COMPOSE_HTTP_TIMEOUT=300 \
-		PATH=/root/venv/3.5/bin:/usr/bin:/bin \
-		MANTA_USER=timgross \
-		MANTA_SUBUSER=triton_mysql \
-		MANTA_ROLE=triton_mysql \
-		$(PYTHON) tests.py
-
-## Run the build container locally and deploy tests on Triton.
-test-local-triton: ~/.triton/profiles.d/us-sw-1.json
-	docker run -it --rm \
-		-e DOCKER_TLS_VERIFY=1 \
-		-e DOCKER_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
-		-e DOCKER_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
-		-e TRITON_PROFILE=us-sw-1 \
-		$(MANTA_CONFIG) \
-		$(LOCALRUN) $(PYTHON) tests.py
-
-## Run the build container locally and deploy tests on local Docker too.
-test-local-docker:
-	docker run -it --rm \
-		-v /var/run/docker.sock:/var/run/docker.sock \
-		-e TRITON_SETUP_CERT_PATH=/root/.triton/docker/timgross@us-sw-1_api_joyent_com \
-		-e TRITON_SETUP_HOST=tcp://us-sw-1.docker.joyent.com:2376 \
-		-e COMPOSE_FILE=local-compose.yml \
-		$(MANTA_CONFIG) \
-		$(LOCALRUN) $(PYTHON) tests.py
+## Pull the container images from the Docker Hub
+pull:
+	docker pull $(image):$(tag)
+	docker pull $(test_image):$(tag)
 
 ## Run the unit tests inside the mysql container
-ci-unit-test:
-	docker run --rm -w /usr/local/bin \
+test:
+	$(dockerLocal) run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
-		autopilotpattern/mysql:$(TAG) \
-		$(PYTHON) test.py
+		$(image):$(tag) \
+		$(python) test.py
 
-## Run the unit tests inside the mysql container w/ source bind-mounted
-unit-test:
-	docker run --rm -w /usr/local/bin \
-		-e LOG_LEVEL=DEBUG \
+## Run the unit tests with source mounted to the container for local dev
+test-src:
+	$(dockerLocal) run --rm  -w /usr/local/bin \
 		-v $(shell pwd)/bin/manager:/usr/local/bin/manager \
 		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
-		autopilotpattern/mysql:$(TAG) \
-		$(PYTHON) test.py
+		-e LOG_LEVEL=DEBUG \
+		$(image):$(tag) \
+		$(python) test.py
 
+$(DOCKER_CERT_PATH)/key.pub:
+	ssh-keygen -y -f $(DOCKER_CERT_PATH)/key.pem > $(DOCKER_CERT_PATH)/key.pub
+
+## For Jenkins test runner only: make sure we have public keys available
+
+SDC_KEYS_VOL ?= -v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH)
+keys: $(DOCKER_CERT_PATH)/key.pub
+
+## Run the integration test runner. Runs locally but targets Triton.
+integration-test:
+	$(call check_var, TRITON_ACCOUNT TRITON_DC, \
+		required to run integration tests on Triton.)
+	$(dockerLocal) run --rm \
+		-e TAG=$(tag) \
+		-e COMPOSE_HTTP_TIMEOUT=300 \
+		-e DOCKER_HOST=$(DOCKER_HOST) \
+		-e DOCKER_TLS_VERIFY=1 \
+		-e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH) \
+		-e MANTA_KEY_ID=$(shell ssh-keygen -l -f $(DOCKER_CERT_PATH)/key.pub | awk '{print $$2}') \
+		-e MANTA_URL=$(MANTA_URL) \
+		-e MANTA_USER=$(MANTA_USER) \
+		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
+		-e MANTA_ROLE=$(MANTA_ROLE) \
+		-e CONSUL=mysql-consul.svc.$(TRITON_ACCOUNT).$(TRITON_DC).cns.joyent.com \
+		$(SDC_KEYS_VOL) -w /src \
+		$(test_image):$(tag) python3 tests.py
+
+# -------------------------------------------------------
 
 ## Tear down all project containers
 teardown:
@@ -151,6 +126,14 @@ logs:
 	docker logs my_mysql_3 > mysql3.log 2>&1
 
 # -------------------------------------------------------
+
+# TODO: we'll need these configured in our Jenkins CI job too
+MANTA_URL ?= https://us-east.manta.joyent.com
+MANTA_USER ?= triton_mysql
+MANTA_SUBUSER ?= triton_mysql
+MANTA_LOGIN ?= triton_mysql
+MANTA_ROLE ?= triton_mysql
+MANTA_POLICY ?= triton_mysql
 
 ## Create user and policies for Manta backups
 manta:
@@ -186,6 +169,17 @@ cleanup:
 
 # -------------------------------------------------------
 # helper functions for testing if variables are defined
+
+## Print environment for build debugging
+debug:
+	@echo WORKSPACE=$(WORKSPACE)
+	@echo GIT_COMMIT=$(GIT_COMMIT)
+	@echo GIT_BRANCH=$(GIT_BRANCH)
+	@echo namespace=$(namespace)
+	@echo tag=$(tag)
+	@echo image=$(image)
+	@echo test_image=$(test_image)
+	@echo python=$(python)
 
 check_var = $(foreach 1,$1,$(__check_var))
 __check_var = $(if $(value $1),,\

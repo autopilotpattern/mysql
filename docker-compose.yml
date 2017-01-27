@@ -1,5 +1,8 @@
-mysql:
-    image: autopilotpattern/mysql
+version: '2.1'
+
+services:
+  mysql:
+    image: autopilotpattern/mysql:${TAG:-latest}
     mem_limit: 4g
     restart: always
     # expose for linking, but each container gets a private IP for
@@ -9,13 +12,14 @@ mysql:
     labels:
       - triton.cns.services=mysql
     env_file: _env
+    network_mode: bridge
     environment:
       - CONTAINERPILOT=file:///etc/containerpilot.json
       - CONSUL_AGENT=1
       - LOG_LEVEL=INFO
       - SERVICE_NAME=mysql
 
-consul:
+  consul:
     image: consul:0.7.1
     command: >
       agent -server -client=0.0.0.0 -bootstrap -ui
@@ -30,7 +34,8 @@ consul:
       - 8302
       - 8400
       - 8500
+    network_mode: bridge
     dns:
       - 127.0.0.1
     labels:
-      - triton.cns.services=consul
+      - triton.cns.services=mysql-consul
