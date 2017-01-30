@@ -1,4 +1,7 @@
-mysql:
+version: '2.1'
+
+services:
+  mysql:
     extends:
       file: docker-compose.yml
       service: mysql
@@ -12,7 +15,7 @@ mysql:
     ports:
       - 3306
 
-consul:
+  consul:
     extends:
       file: docker-compose.yml
       service: consul
