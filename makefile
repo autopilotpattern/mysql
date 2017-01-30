@@ -90,6 +90,7 @@ $(DOCKER_CERT_PATH)/key.pub:
 ## For Jenkins test runner only: make sure we have public keys available
 
 SDC_KEYS_VOL ?= -v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH)
+MANTA_KEY_ID ?= $(shell ssh-keygen -l -f $(DOCKER_CERT_PATH)/key.pub | awk '{print $$2}')
 keys: $(DOCKER_CERT_PATH)/key.pub
 
 ## Run the integration test runner. Runs locally but targets Triton.
@@ -102,7 +103,7 @@ integration-test:
 		-e DOCKER_HOST=$(DOCKER_HOST) \
 		-e DOCKER_TLS_VERIFY=1 \
 		-e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH) \
-		-e MANTA_KEY_ID=$(shell ssh-keygen -l -f $(DOCKER_CERT_PATH)/key.pub | awk '{print $$2}') \
+		-e MANTA_KEY_ID=$(MANTA_KEY_ID) \
 		-e MANTA_URL=$(MANTA_URL) \
 		-e MANTA_USER=$(MANTA_USER) \
 		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
