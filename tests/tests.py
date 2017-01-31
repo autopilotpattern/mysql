@@ -50,12 +50,12 @@ class MySQLStackTest(AutopilotPatternTest):
         - the other replica should replicate from it
         """
         # wait until the first instance has configured itself as the
-        # the primary
-        self.settle('mysql-primary', 1, timeout=120)
+        # the primary; we need very long timeout b/c of provisioning
+        self.settle('mysql-primary', 1, timeout=600)
 
         # scale up, make sure we have 2 working replica instances
         self.compose_scale('mysql', 3)
-        self.settle('mysql', 2, timeout=180)
+        self.settle('mysql', 2, timeout=600)
 
         # create a table
         create_table = 'CREATE TABLE tbl1 (field1 INT, field2 VARCHAR(36));'
