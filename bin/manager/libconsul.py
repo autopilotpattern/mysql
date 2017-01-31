@@ -202,7 +202,7 @@ class Consul(object):
 
 
     @debug(log_output=True)
-    def has_snapshot(self, timeout=60):
+    def has_snapshot(self, timeout=600):
         """ Ask Consul for 'last backup' key. """
         while timeout > 0:
             try:
