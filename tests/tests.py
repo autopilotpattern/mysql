@@ -75,7 +75,7 @@ class MySQLStackTest(AutopilotPatternTest):
 
         # kill the primary, make sure we get a new primary
         self.docker_stop('mysql_1')
-        self.settle('mysql-primary', 1, timeout=60)
+        self.settle('mysql-primary', 1, timeout=300)
         self.settle('mysql', 1)
 
         # check replication is still working
