@@ -4,12 +4,11 @@
 
 MAKEFLAGS += --warn-undefined-variables
 .DEFAULT_GOAL := build
-.PHONY: build ship test help
+.PHONY: *
 
 # we get these from CI environment if available, otherwise from git
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD)
 GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
-WORKSPACE ?= $(shell pwd)
 
 namespace ?= autopilotpattern
 tag := branch-$(shell basename $(GIT_BRANCH))
@@ -57,10 +56,9 @@ ship:
 	$(dockerLocal) push $(image):$(tag)
 	$(dockerLocal) push $(image):latest
 
+
 # ------------------------------------------------
 # Test running
-
-LOG_LEVEL ?= INFO
 
 ## Pull the container images from the Docker Hub
 pull:
@@ -87,8 +85,7 @@ test-src:
 $(DOCKER_CERT_PATH)/key.pub:
 	ssh-keygen -y -f $(DOCKER_CERT_PATH)/key.pem > $(DOCKER_CERT_PATH)/key.pub
 
-## For Jenkins test runner only: make sure we have public keys available
-
+# For Jenkins test runner only: make sure we have public keys available
 SDC_KEYS_VOL ?= -v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH)
 MANTA_KEY_ID ?= $(shell ssh-keygen -l -f $(DOCKER_CERT_PATH)/key.pub | awk '{print $$2}')
 keys: $(DOCKER_CERT_PATH)/key.pub
@@ -128,7 +125,6 @@ logs:
 
 # -------------------------------------------------------
 
-# TODO: we'll need these configured in our Jenkins CI job too
 MANTA_URL ?= https://us-east.manta.joyent.com
 MANTA_USER ?= triton_mysql
 MANTA_SUBUSER ?= triton_mysql
@@ -173,7 +169,6 @@ cleanup:
 
 ## Print environment for build debugging
 debug:
-	@echo WORKSPACE=$(WORKSPACE)
 	@echo GIT_COMMIT=$(GIT_COMMIT)
 	@echo GIT_BRANCH=$(GIT_BRANCH)
 	@echo namespace=$(namespace)
