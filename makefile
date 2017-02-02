@@ -63,7 +63,6 @@ ship:
 ## Pull the container images from the Docker Hub
 pull:
 	docker pull $(image):$(tag)
-	docker pull $(test_image):$(tag)
 
 ## Run the unit tests inside the mysql container
 test:
