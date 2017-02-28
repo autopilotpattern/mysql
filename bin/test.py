@@ -936,7 +936,7 @@ TEST_ENVIRON = {
     'CONSUL': 'my.consul.example.com',
     'CONSUL_AGENT': '1',
 
-    'CONTAINERPILOT': 'file:///etc/containerpilot.json',
+    'CONTAINERPILOT': '/etc/containerpilot.json5',
 
     'MYSQL_DATABASE': 'test_mydb',
     'MYSQL_USER': 'test_me',

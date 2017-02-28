@@ -1,0 +1,64 @@
+{
+  consul: '{{ if .CONSUL_AGENT }}localhost{{ else }}{{ .CONSUL | default "consul"}}{{ end }}:8500',
+  logging: {
+    level: '{{ .LOG_LEVEL | default "INFO" }}'
+  },
+  jobs: [
+    {
+      name: "preStart",
+      exec: "python /usr/local/bin/manage.py"
+    },
+    {
+      name: '{{ .SERVICE_NAME | default "mysql" }}',
+      exec: ["mysqld",
+             "--console",
+             "--log-bin=mysql-bin",
+             "--log_slave_updates=ON",
+             "--gtid-mode=ON",
+             "--enforce-gtid-consistency=ON"],
+      port: 3306,
+      when: {
+        source: "preStart",
+        once: "exitSuccess"
+      },
+      health: {
+        exec: "python /usr/local/bin/manage.py health",
+        interval: 5,
+        ttl: 25
+      }
+    },
+    {
+      name: "onChange",
+      exec: "python /usr/local/bin/manage.py on_change",
+      when: {
+        source:'watch.{{ .SERVICE_NAME | default "mysql" }}-primary'  ,
+        each: "changed"
+      }
+    },
+    {
+      name: "snapshot-check",
+      exec: "python /usr/local/bin/manage.py snapshot_task",
+      timeout: "10m",
+      when: {
+        interval: "5m"
+      },
+    },
+    {{ if .CONSUL_AGENT }}{
+      name: "consul-agent",
+      restarts: "unlimited",
+      exec: ["/usr/local/bin/consul", "agent",
+                  "-data-dir=/data",
+                  "-config-dir=/config",
+                  "-rejoin",
+                  "-retry-join", '{{ .CONSUL | default "consul"}}',
+                  "-retry-max", "10",
+                  "-retry-interval", "10s"]
+    }{{ end }}
+  ],
+  watches: [
+    {
+      name: '{{ .SERVICE_NAME | default "mysql" }}-primary',
+      interval: 10
+    }
+  ]
+}
