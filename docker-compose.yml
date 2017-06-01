@@ -38,4 +38,4 @@ services:
     dns:
       - 127.0.0.1
     labels:
-      - triton.cns.services=mysql-consul
+      - triton.cns.services=mc
