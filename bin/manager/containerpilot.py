@@ -1,7 +1,10 @@
 """ autopilotpattern/mysql ContainerPilot configuraton wrapper """
-import json
 import os
 import signal
+import subprocess
+
+import json5
+
 from manager.utils import debug, env, to_flag, log, UNASSIGNED
 
 # pylint: disable=invalid-name,no-self-use,dangerous-default-value
@@ -19,38 +22,20 @@ class ContainerPilot(object):
 
     def load(self, envs=os.environ):
         """
-        Parses the ContainerPilot config file and interpolates the
-        environment into it the same way that ContainerPilot does.
-        The `state` attribute will be populated with the state
-        derived from the configuration file and not the state known
-        by Consul.
+        Fetches the ContainerPilot config file and asks ContainerPilot
+        to render it out so that all environment variables have been
+        interpolated.
         """
-        self.path = env('CONTAINERPILOT', None, envs,
-                        lambda x: x.replace('file://', ''))
-        with open(self.path, 'r') as f:
-            cfg = f.read()
+        self.path = env('CONTAINERPILOT', None, envs)
+        try:
+            cfg = subprocess.check_output(['containerpilot', '-config',
+                                           self.path, '-template'],
+                                          env=envs.copy())
+        except (subprocess.CalledProcessError, OSError) as ex:
+            log.error('containerpilot -template returned error: %s', ex)
+            raise(ex)
 
-        # remove templating so that we can parse it as JSON; we'll
-        # override the attributes directly in the resulting dict
-        cfg = cfg.replace('[{{ if .CONSUL_AGENT }}', '[')
-        cfg = cfg.replace('}{{ end }}', '}')
-
-        # remove templating for SERVICE_NAME
-        service_name = env('SERVICE_NAME', 'mysql')
-        cfg = cfg.replace('{{ if .SERVICE_NAME }}{{ .SERVICE_NAME }}{{ else }}mysql{{ end }}',service_name)
-        config = json.loads(cfg)
-
-        if env('CONSUL_AGENT', False, envs, to_flag):
-            config['consul'] = 'localhost:8500'
-            cmd = config['coprocesses'][0]['command']
-            host_cfg_idx = cmd.index('-retry-join') + 1
-            cmd[host_cfg_idx] = env('CONSUL', 'consul', envs)
-            config['coprocesses'][0]['command'] = cmd
-        else:
-            config['consul'] = env('CONSUL', 'consul', envs,
-                                   fn='{}:8500'.format)
-            config['coprocesses'] = []
-
+        config = json5.loads(cfg)
         self.config = config
 
     @debug(log_output=True)
@@ -61,8 +46,8 @@ class ContainerPilot(object):
         """
         if self.state == UNASSIGNED:
             return False
-        if self.state and self.config['services'][0]['name'] != self.state:
-            self.config['services'][0]['name'] = self.state
+        if self.state and self.config['jobs'][1]['name'] != self.state:
+            self.config['jobs'][1]['name'] = self.state
             self._render()
             return True
         return False
@@ -70,7 +55,7 @@ class ContainerPilot(object):
     @debug
     def _render(self):
         """ Writes the current config to file. """
-        new_config = json.dumps(self.config)
+        new_config = json5.dumps(self.config)
         with open(self.path, 'w') as f:
             log.info('rewriting ContainerPilot config: %s', new_config)
             f.write(new_config)
@@ -78,4 +63,7 @@ class ContainerPilot(object):
     def reload(self):
         """ Force ContainerPilot to reload its configuration """
         log.info('Reloading ContainerPilot configuration.')
-        os.kill(1, signal.SIGHUP)
+        try:
+            subprocess.check_output(['containerpilot', '-reload'])
+        except subprocess.CalledProcessError:
+            log.info("call to 'containerpilot -reload' failed")

@@ -104,7 +104,7 @@ integration-test:
 		-e MANTA_USER=$(MANTA_USER) \
 		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
 		-e MANTA_ROLE=$(MANTA_ROLE) \
-		-e CONSUL=mysql-consul.svc.$(TRITON_ACCOUNT).$(TRITON_DC).cns.joyent.com \
+		-e CONSUL=mc.svc.$(TRITON_ACCOUNT).$(TRITON_DC).cns.joyent.com \
 		$(SDC_KEYS_VOL) -w /src \
 		$(test_image):$(tag) python3 tests.py
 

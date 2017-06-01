@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 import fcntl
-import json
 import logging
 import os
 import tempfile
@@ -8,6 +7,7 @@ import unittest
 
 # pylint: disable=import-error
 import consul as pyconsul
+import json5
 import mock
 
 import manage
@@ -835,25 +835,20 @@ class TestContainerPilotConfig(unittest.TestCase):
         self.environ['CONSUL_AGENT'] = '1'
         cp = ContainerPilot()
         cp.load(envs=self.environ)
+
         self.assertEqual(cp.config['consul'], 'localhost:8500')
-        cmd = cp.config['coprocesses'][0]['command']
+        cmd = cp.config['jobs'][4]['exec']
         host_cfg_idx = cmd.index('-retry-join') + 1
         self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
         self.assertEqual(cp.state, UNASSIGNED)
 
     def test_parse_without_consul_agent(self):
-        self.environ['CONSUL_AGENT'] = '0'
-        cp = ContainerPilot()
-        cp.load(envs=self.environ)
-        self.assertEqual(cp.config['consul'], 'my.consul.example.com:8500')
-        self.assertEqual(cp.config['coprocesses'], [])
-        self.assertEqual(cp.state, UNASSIGNED)
-
         self.environ['CONSUL_AGENT'] = ''
         cp = ContainerPilot()
         cp.load(envs=self.environ)
         self.assertEqual(cp.config['consul'], 'my.consul.example.com:8500')
-        self.assertEqual(cp.config['coprocesses'], [])
+        self.assertFalse('consul-agent' in
+                         [job['name'] for job in cp.config['jobs']])
         self.assertEqual(cp.state, UNASSIGNED)
 
     def test_update(self):
@@ -873,9 +868,9 @@ class TestContainerPilotConfig(unittest.TestCase):
         cp.state = PRIMARY
         cp.update()
         with open(temp_file.name, 'r') as updated:
-            config = json.loads(updated.read())
+            config = json5.loads(updated.read())
             self.assertEqual(config['consul'], 'localhost:8500')
-            cmd = config['coprocesses'][0]['command']
+            cmd = config['jobs'][4]['exec']
             host_cfg_idx = cmd.index('-retry-join') + 1
             self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
 
