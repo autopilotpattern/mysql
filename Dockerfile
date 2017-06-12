@@ -1,7 +1,7 @@
 FROM percona:5.6
 
-ENV CONTAINERPILOT_VER 2.6.0
-ENV CONTAINERPILOT file:///etc/containerpilot.json
+ENV CONTAINERPILOT_VER 3.0.0-RC1
+ENV CONTAINERPILOT /etc/containerpilot.json5
 
 # By keeping a lot of discrete steps in a single RUN we can clean up after
 # ourselves in the same layer. This is gross but it saves ~100MB in the image
@@ -23,6 +23,7 @@ RUN set -ex \
        python-Consul==0.4.7 \
        manta==2.5.0 \
        mock==2.0.0 \
+       json5==0.2.4 \
     # \
     # Add Consul from https://releases.hashicorp.com/consul \
     # \
@@ -35,7 +36,7 @@ RUN set -ex \
     # \
     # Add ContainerPilot and set its configuration file path \
     # \
-    && export CONTAINERPILOT_CHECKSUM=c1bcd137fadd26ca2998eec192d04c08f62beb1f \
+    && export CONTAINERPILOT_CHECKSUM=f67929d1c8567d31772085fc252338091a5f795c \
     && curl -Lvo /tmp/containerpilot.tar.gz "https://github.com/joyent/containerpilot/releases/download/${CONTAINERPILOT_VER}/containerpilot-${CONTAINERPILOT_VER}.tar.gz" \
     && echo "${CONTAINERPILOT_CHECKSUM}  /tmp/containerpilot.tar.gz" | sha1sum -c \
     && tar zxf /tmp/containerpilot.tar.gz -C /usr/local/bin \
@@ -59,13 +60,4 @@ COPY bin/manage.py /usr/local/bin/manage.py
 
 # override the parent entrypoint
 ENTRYPOINT []
-
-# use --console to get error logs to stderr
-CMD [ "containerpilot", \
-      "mysqld", \
-      "--console", \
-      "--log-bin=mysql-bin", \
-      "--log_slave_updates=ON", \
-      "--gtid-mode=ON", \
-      "--enforce-gtid-consistency=ON" \
-]
+CMD ["/usr/local/bin/containerpilot"]
