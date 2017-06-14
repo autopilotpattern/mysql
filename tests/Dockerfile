@@ -12,7 +12,7 @@ RUN npm install -g triton manta json
 RUN pip3 install docker-compose==1.10.0
 
 # install specific version of Docker and Compose client
-COPY test/triton-docker-cli/triton-docker /usr/local/bin/triton-docker
+COPY tests/triton-docker-cli/triton-docker /usr/local/bin/triton-docker
 RUN sed -i 's/1.9.0/1.10.0/' /usr/local/bin/triton-docker \
     && ln -s /usr/local/bin/triton-docker /usr/local/bin/triton-compose \
     && ln -s /usr/local/bin/triton-docker /usr/local/bin/triton-docker-install \
@@ -28,5 +28,5 @@ COPY examples/compose/docker-compose.yml /src/examples/compose/docker-compose.ym
 COPY examples/compose/setup.sh /src/examples/compose/setup.sh
 
 # install test code
-COPY test/triton.sh /src/triton.sh
-COPY test/compose.sh /src/compose.sh
+COPY tests/triton.sh /src/triton.sh
+COPY tests/compose.sh /src/compose.sh

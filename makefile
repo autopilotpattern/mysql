@@ -13,7 +13,7 @@ GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 namespace ?= autopilotpattern
 tag := branch-$(shell basename $(GIT_BRANCH))
 image := $(namespace)/mysql
-test_image := $(namespace)/mysql-testrunner
+testImage := $(namespace)/mysql-testrunner
 
 ## Display this help message
 help:
@@ -39,17 +39,17 @@ build: build/tester
 
 ## Build the test running container
 build/tester:
-	docker build -f tests/Dockerfile -t=$(test_image):$(tag) .
+	docker build -f tests/Dockerfile -t=$(testImage):$(tag) .
 
 ## Push the current application container images to the Docker Hub
 push:
 	docker push $(image):$(tag)
-	docker push $(test_image):$(tag)
+	docker push $(testImage):$(tag)
 
 ## Tag the current images as 'latest' and push them to the Docker Hub
 ship:
 	docker tag $(image):$(tag) $(image):latest
-	docker tag $(test_image):$(tag) $(test_image):latest
+	docker tag $(testImage):$(tag) $(testImage):latest
 	docker tag $(image):$(tag) $(image):latest
 	docker push $(image):$(tag)
 	docker push $(image):latest
@@ -171,7 +171,7 @@ debug:
 	@echo namespace=$(namespace)
 	@echo tag=$(tag)
 	@echo image=$(image)
-	@echo test_image=$(test_image)
+	@echo testImage=$(testImage)
 
 check_var = $(foreach 1,$1,$(__check_var))
 __check_var = $(if $(value $1),,\

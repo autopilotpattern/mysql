@@ -26,8 +26,8 @@ fail() {
     echo '------------------------------------------------'
     echo 'FAILED: dumping logs'
     echo '------------------------------------------------'
-    docker-compose -p "$project" -f "$manifest" ps
-    docker-compose -p "$project" -f "$manifest" logs
+    triton-compose -p "$project" -f "$manifest" ps
+    triton-compose -p "$project" -f "$manifest" logs
     echo '------------------------------------------------'
     echo 'FAILED'
     echo "$1"
@@ -76,7 +76,7 @@ profile() {
     env | grep TRITON
 
     local manta_key
-    manta_key=$(tr '\n' '#' < "${DOCKER_CERT_PATH}/key/pem")
+    manta_key=$(tr '\n' '#' < "${DOCKER_CERT_PATH}/key.pem")
     {
         echo "MYSQL_USER=${user}"
         echo "MYSQL_PASSWORD=${passwd}"
@@ -102,7 +102,7 @@ wait_for_containers() {
     i=0
     echo "waiting for $count MySQL containers to be Up..."
     while [ $i -lt "$timeout" ]; do
-        got=$(docker-compose -p "$project" -f "$manifest" ps mysql)
+        got=$(triton-compose -p "$project" -f "$manifest" ps mysql)
         got=$(echo "$got" | grep -c "Up")
         if [ "$got" -eq "$count" ]; then
             echo "$count instances reported Up in <= $i seconds"
@@ -198,33 +198,33 @@ exec_query() {
 
 restart() {
     node="${project}_$1"
-    docker restart "$node"
+    triton-docker restart "$node"
 }
 
 stop() {
     node="${project}_$1"
-    docker stop "$node"
+    triton-docker stop "$node"
 }
 
 run() {
     echo
     echo '* cleaning up previous test run'
     echo
-    docker-compose -p "$project" -f "$manifest" stop
-    docker-compose -p "$project" -f "$manifest" rm -f
+    triton-compose -p "$project" -f "$manifest" stop
+    triton-compose -p "$project" -f "$manifest" rm -f
 
     echo
     echo '* standing up initial test targets'
     echo
-    docker-compose -p "$project" -f "$manifest" up -d
+    triton-compose -p "$project" -f "$manifest" up -d
 }
 
 teardown() {
     echo
     echo '* tearing down containers'
     echo
-    docker-compose -p "$project" -f "$manifest" stop
-    docker-compose -p "$project" -f "$manifest" rm -f
+    triton-compose -p "$project" -f "$manifest" stop
+    triton-compose -p "$project" -f "$manifest" rm -f
 
     # TODO: cleanup Manta directory too
     # echo '* cleaning up Manta directory'
@@ -236,7 +236,7 @@ scale() {
     echo
     echo '* scaling up cluster'
     echo
-    docker-compose -p "$project" -f "$manifest" scale mysql="$count"
+    triton-compose -p "$project" -f "$manifest" scale mysql="$count"
 }
 
 
