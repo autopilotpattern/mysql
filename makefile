@@ -22,8 +22,6 @@ help:
 # ------------------------------------------------
 # Target environment configuration
 
-dockerLocal := DOCKER_HOST= DOCKER_TLS_VERIFY= DOCKER_CERT_PATH= docker
-
 # if you pass `TRACE=1` into the call to `make` then the Python tests will
 # run under the `trace` module (provides detailed call logging)
 ifndef TRACE
@@ -36,25 +34,25 @@ endif
 # Container builds
 
 ## Builds the application container image locally
-build: test-runner
-	$(dockerLocal) build -t=$(image):$(tag) .
+build: build/tester
+	docker build -t=$(image):$(tag) .
 
 ## Build the test running container
-test-runner:
-	$(dockerLocal) build -f tests/Dockerfile -t=$(test_image):$(tag) .
+build/tester:
+	docker build -f tests/Dockerfile -t=$(test_image):$(tag) .
 
 ## Push the current application container images to the Docker Hub
 push:
-	$(dockerLocal) push $(image):$(tag)
-	$(dockerLocal) push $(test_image):$(tag)
+	docker push $(image):$(tag)
+	docker push $(test_image):$(tag)
 
 ## Tag the current images as 'latest' and push them to the Docker Hub
 ship:
-	$(dockerLocal) tag $(image):$(tag) $(image):latest
-	$(dockerLocal) tag $(test_image):$(tag) $(test_image):latest
-	$(dockerLocal) tag $(image):$(tag) $(image):latest
-	$(dockerLocal) push $(image):$(tag)
-	$(dockerLocal) push $(image):latest
+	docker tag $(image):$(tag) $(image):latest
+	docker tag $(test_image):$(tag) $(test_image):latest
+	docker tag $(image):$(tag) $(image):latest
+	docker push $(image):$(tag)
+	docker push $(image):latest
 
 
 # ------------------------------------------------
@@ -64,16 +62,19 @@ ship:
 pull:
 	docker pull $(image):$(tag)
 
+## Run all tests
+test: test/unit test/triton # test/compose
+
 ## Run the unit tests inside the mysql container
-test:
-	$(dockerLocal) run --rm -w /usr/local/bin \
+test/unit:
+	docker run --rm -w /usr/local/bin \
 		-e LOG_LEVEL=DEBUG \
 		$(image):$(tag) \
 		$(python) test.py
 
 ## Run the unit tests with source mounted to the container for local dev
-test-src:
-	$(dockerLocal) run --rm  -w /usr/local/bin \
+test/unit-src:
+	docker run --rm  -w /usr/local/bin \
 		-v $(shell pwd)/bin/manager:/usr/local/bin/manager \
 		-v $(shell pwd)/bin/manage.py:/usr/local/bin/manage.py \
 		-v $(shell pwd)/bin/test.py:/usr/local/bin/test.py \
@@ -81,32 +82,29 @@ test-src:
 		$(image):$(tag) \
 		$(python) test.py
 
-$(DOCKER_CERT_PATH)/key.pub:
-	ssh-keygen -y -f $(DOCKER_CERT_PATH)/key.pem > $(DOCKER_CERT_PATH)/key.pub
-
-# For Jenkins test runner only: make sure we have public keys available
-SDC_KEYS_VOL ?= -v $(DOCKER_CERT_PATH):$(DOCKER_CERT_PATH)
-MANTA_KEY_ID ?= $(shell ssh-keygen -l -f $(DOCKER_CERT_PATH)/key.pub | awk '{print $$2}')
-keys: $(DOCKER_CERT_PATH)/key.pub
+# TODO: add once we can run with non-Manta storage backend
+# Run the integration test runner against Compose locally.
+# test/compose:
+# 	docker run --rm \
+# 		-e TAG=$(tag) \
+# 		-e GIT_BRANCH=$(GIT_BRANCH) \
+# 		--network=bridge \
+# 		-v /var/run/docker.sock:/var/run/docker.sock \
+# 		-w /src \
+# 		$(testImage):$(tag) /src/compose.sh
 
 ## Run the integration test runner. Runs locally but targets Triton.
-integration-test:
-	$(call check_var, TRITON_ACCOUNT TRITON_DC, \
+test/triton:
+	$(call check_var, TRITON_PROFILE, \
 		required to run integration tests on Triton.)
-	$(dockerLocal) run --rm \
+	docker run --rm \
 		-e TAG=$(tag) \
-		-e COMPOSE_HTTP_TIMEOUT=300 \
-		-e DOCKER_HOST=$(DOCKER_HOST) \
-		-e DOCKER_TLS_VERIFY=1 \
-		-e DOCKER_CERT_PATH=$(DOCKER_CERT_PATH) \
-		-e MANTA_KEY_ID=$(MANTA_KEY_ID) \
-		-e MANTA_URL=$(MANTA_URL) \
-		-e MANTA_USER=$(MANTA_USER) \
-		-e MANTA_SUBUSER=$(MANTA_SUBUSER) \
-		-e MANTA_ROLE=$(MANTA_ROLE) \
-		-e CONSUL=mc.svc.$(TRITON_ACCOUNT).$(TRITON_DC).cns.joyent.com \
-		$(SDC_KEYS_VOL) -w /src \
-		$(test_image):$(tag) python3 tests.py
+		-e TRITON_PROFILE=$(TRITON_PROFILE) \
+		-e GIT_BRANCH=$(GIT_BRANCH) \
+		-v ~/.ssh:/root/.ssh:ro \
+		-v ~/.triton/profiles.d:/root/.triton/profiles.d:ro \
+		-w /src \
+		$(testImage):$(tag) /src/triton.sh
 
 # -------------------------------------------------------
 
@@ -174,7 +172,6 @@ debug:
 	@echo tag=$(tag)
 	@echo image=$(image)
 	@echo test_image=$(test_image)
-	@echo python=$(python)
 
 check_var = $(foreach 1,$1,$(__check_var))
 __check_var = $(if $(value $1),,\

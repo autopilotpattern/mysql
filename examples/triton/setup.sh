@@ -20,7 +20,6 @@ help() {
 # populated by `check` function whenever we're using Triton
 TRITON_USER=
 TRITON_DC=
-TRITON_ACCOUNT=
 
 # ---------------------------------------------------
 # Top-level commands
@@ -85,7 +84,6 @@ envcheck() {
     local docker_dc=$(echo $DOCKER_HOST | awk -F"/" '{print $3}' | awk -F'.' '{print $1}')
     TRITON_USER=$(triton profile get | awk -F": " '/account:/{print $2}')
     TRITON_DC=$(triton profile get | awk -F"/" '/url:/{print $3}' | awk -F'.' '{print $1}')
-    TRITON_ACCOUNT=$(triton account get | awk -F": " '/id:/{print $2}')
     if [ ! "$docker_user" = "$TRITON_USER" ] || [ ! "$docker_dc" = "$TRITON_DC" ]; then
         echo
         tput rev  # reverse
@@ -143,10 +141,6 @@ envcheck() {
         # munge the private key so that we can pass it into an env var sanely
         # and then unmunge it in our startup script
         echo MANTA_PRIVATE_KEY=$(cat ${MANTA_PRIVATE_KEY_PATH} | tr '\n' '#') >> _env
-        echo >> _env
-
-        echo '# Consul discovery via Triton CNS' >> _env
-        echo CONSUL=mysql-consul.svc.${TRITON_ACCOUNT}.${TRITON_DC}.cns.joyent.com >> _env
         echo >> _env
 
         echo 'Edit the _env file with your desired MYSQL_* and MANTA_* config'
