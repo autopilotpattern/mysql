@@ -1,3 +1,0 @@
-[submodule "tests/testing"]
-	path = tests/testing
-	url = https://github.com/autopilotpattern/testing.git
