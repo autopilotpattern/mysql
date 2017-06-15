@@ -6,16 +6,22 @@
   jobs: [
     {
       name: "preStart",
-      exec: "python /usr/local/bin/manage.py"
+      exec: "python /usr/local/bin/manage.py",
+      when: {
+        source: "consul-agent",
+        once: "healthy"
+      }
     },
     {
       name: '{{ .SERVICE_NAME | default "mysql" }}',
-      exec: ["mysqld",
-             "--console",
-             "--log-bin=mysql-bin",
-             "--log_slave_updates=ON",
-             "--gtid-mode=ON",
-             "--enforce-gtid-consistency=ON"],
+      exec: [
+        "mysqld",
+        "--console",
+        "--log-bin=mysql-bin",
+        "--log_slave_updates=ON",
+        "--gtid-mode=ON",
+        "--enforce-gtid-consistency=ON"
+      ],
       port: 3306,
       when: {
         source: "preStart",
@@ -46,13 +52,16 @@
     {{ if .CONSUL_AGENT }}{
       name: "consul-agent",
       restarts: "unlimited",
-      exec: ["/usr/local/bin/consul", "agent",
-                  "-data-dir=/data",
-                  "-config-dir=/config",
-                  "-rejoin",
-                  "-retry-join", '{{ .CONSUL | default "consul"}}',
-                  "-retry-max", "10",
-                  "-retry-interval", "10s"]
+      exec: [
+        "/usr/local/bin/consul", "agent",
+        "-data-dir=/data",
+        "-config-dir=/config"
+      ],
+      health: {
+        exec: 'consul join {{ .CONSUL | default "consul"}}',
+        interval: 5,
+        ttl: 10
+      }
     }{{ end }}
   ],
   watches: [
