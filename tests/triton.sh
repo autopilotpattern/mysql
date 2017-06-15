@@ -12,11 +12,11 @@ db=${MYSQL_DATABASE:-mytestdb}
 repl_user=${MYSQL_REPL_USER:-myrepluser}
 repl_passwd=${MYSQL_REPL_PASSWORD:-password2}
 
-manta_bucket=${MANTA_BUCKET:-"~~/stor/triton_mysql"}
 manta_url=${MANTA_URL:-https://us-east.manta.joyent.com}
 manta_user=${MANTA_USER:-triton_mysql}
 manta_subuser=${MANTA_SUBUSER:-triton_mysql}
 manta_role=${MANTA_ROLE:-triton_mysql}
+manta_bucket=${MANTA_BUCKET:-"${manta_user}/stor/triton_mysql"}
 
 project="$COMPOSE_PROJECT"
 manifest="$COMPOSE_FILE"
