@@ -1,6 +1,6 @@
 FROM percona:5.6
 
-ENV CONTAINERPILOT_VER 3.0.0
+ENV CONTAINERPILOT_VER 3.1.0
 ENV CONTAINERPILOT /etc/containerpilot.json5
 
 # By keeping a lot of discrete steps in a single RUN we can clean up after
@@ -20,15 +20,15 @@ RUN set -ex \
     && curl -Lvo get-pip.py https://bootstrap.pypa.io/get-pip.py \
     && python get-pip.py \
     && pip install \
-       python-Consul==0.4.7 \
+       python-Consul==0.7.0 \
        manta==2.5.0 \
        mock==2.0.0 \
        json5==0.2.4 \
     # \
     # Add Consul from https://releases.hashicorp.com/consul \
     # \
-    && export CHECKSUM=5dbfc555352bded8a39c7a8bf28b5d7cf47dec493bc0496e21603c84dfe41b4b \
-    && curl -Lvo /tmp/consul.zip https://releases.hashicorp.com/consul/0.7.1/consul_0.7.1_linux_amd64.zip \
+    && export CHECKSUM=c8859a0a34c50115cdff147f998b2b63226f5f052e50f342209142420d1c2668 \
+    && curl -Lvo /tmp/consul.zip https://releases.hashicorp.com/consul/0.8.4/consul_0.8.4_linux_amd64.zip \
     && echo "${CHECKSUM}  /tmp/consul.zip" | sha256sum -c \
     && unzip /tmp/consul.zip -d /usr/local/bin \
     && rm /tmp/consul.zip \
@@ -36,7 +36,7 @@ RUN set -ex \
     # \
     # Add ContainerPilot and set its configuration file path \
     # \
-    && export CONTAINERPILOT_CHECKSUM=6da4a4ab3dd92d8fd009cdb81a4d4002a90c8b7c \
+    && export CONTAINERPILOT_CHECKSUM=d06e289e6e0ca82156d77cea36ff0f0246fcca60 \
     && curl -Lvo /tmp/containerpilot.tar.gz "https://github.com/joyent/containerpilot/releases/download/${CONTAINERPILOT_VER}/containerpilot-${CONTAINERPILOT_VER}.tar.gz" \
     && echo "${CONTAINERPILOT_CHECKSUM}  /tmp/containerpilot.tar.gz" | sha1sum -c \
     && tar zxf /tmp/containerpilot.tar.gz -C /usr/local/bin \

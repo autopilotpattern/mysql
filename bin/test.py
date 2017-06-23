@@ -837,9 +837,8 @@ class TestContainerPilotConfig(unittest.TestCase):
         cp.load(envs=self.environ)
 
         self.assertEqual(cp.config['consul'], 'localhost:8500')
-        cmd = cp.config['jobs'][4]['exec']
-        host_cfg_idx = cmd.index('-retry-join') + 1
-        self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
+        health_check_exec = cp.config['jobs'][4]['health']['exec']
+        self.assertIn('my.consul.example.com', health_check_exec)
         self.assertEqual(cp.state, UNASSIGNED)
 
     def test_parse_without_consul_agent(self):
@@ -870,9 +869,8 @@ class TestContainerPilotConfig(unittest.TestCase):
         with open(temp_file.name, 'r') as updated:
             config = json5.loads(updated.read())
             self.assertEqual(config['consul'], 'localhost:8500')
-            cmd = config['jobs'][4]['exec']
-            host_cfg_idx = cmd.index('-retry-join') + 1
-            self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
+            health_check_exec = config['jobs'][4]['health']['exec']
+            self.assertIn('my.consul.example.com', health_check_exec)
 
 
 class TestMantaConfig(unittest.TestCase):
