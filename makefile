@@ -56,6 +56,12 @@ ship:
 
 
 # ------------------------------------------------
+# Run the example stack
+
+run/compose:
+	cd examples/compose && TAG=$(tag) docker-compose -p my up -d
+
+# ------------------------------------------------
 # Test running
 
 ## Pull the container images from the Docker Hub

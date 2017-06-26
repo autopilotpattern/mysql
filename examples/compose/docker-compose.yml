@@ -7,23 +7,36 @@ services:
     restart: always
     expose:
       - 3306
-    env_file: _env
     network_mode: bridge
     environment:
+      - MYSQL_USER=dbuser
+      - MYSQL_PASSWORD=seekretPassword
+      - MYSQL_REPL_USER=repluser
+      - MYSQL_REPL_PASSWORD=seekretReplPassword
+      - MYSQL_DATABASE=demodb
+      - BACKUP_TTL=120
       - CONSUL_AGENT=1
       - LOG_LEVEL=DEBUG
       - CONSUL=consul
+      - SNAPSHOT_BACKEND=local
+      - SNAPSHOT_DIR=/tmp/snapshots
+    volumes:
+      # shared storage location for snapshots
+      - ../../tmp:/tmp/snapshots
+      - ../../bin/manage.py:/usr/local/bin/manage.py
+      - ../../bin/test.py:/usr/local/bin/test.py
+      - ../../bin/manager:/usr/local/bin/manager
     links:
       - consul:consul
 
   consul:
-    image: consul:0.7.1
+    image: consul:0.8.4
     command: >
       agent -server -client=0.0.0.0 -bootstrap -ui
     restart: always
     mem_limit: 128m
     ports:
-      - 8500:8500
+      - 8500
     expose:
       - 53
       - 8300
