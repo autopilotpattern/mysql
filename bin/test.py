@@ -11,10 +11,13 @@ import json5
 import mock
 
 import manage
-from manager.containerpilot import ContainerPilot
-from manager.libconsul import Consul
-from manager.libmanta import Manta
-from manager.libmysql import MySQL
+# pylint: disable=invalid-name,no-self-use,dangerous-default-value
+from manager.client import MySQL
+from manager.config import ContainerPilot
+from manager.discovery import Consul
+from manager.env import *
+from manager.network import *
+from manager.storage.manta_stor import Manta
 from manager.utils import *
 
 

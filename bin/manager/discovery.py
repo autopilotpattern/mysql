@@ -5,9 +5,11 @@ import json
 import os
 import time
 
-from manager.utils import debug, env, log, to_flag, \
-    WaitTimeoutError, UnknownPrimary, PRIMARY_KEY, LAST_BACKUP_KEY, \
+from manager.env import env, to_flag, \
+    PRIMARY_KEY, LAST_BACKUP_KEY, \
     BACKUP_TTL, BACKUP_LOCK_KEY, LAST_BINLOG_KEY
+from manager.utils import debug, log, \
+    WaitTimeoutError, UnknownPrimary
 
 # pylint: disable=import-error,invalid-name,dangerous-default-value
 import consul as pyconsul

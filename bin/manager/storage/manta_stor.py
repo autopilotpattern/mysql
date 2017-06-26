@@ -1,7 +1,9 @@
 """ Module for Manta client wrapper and related tooling. """
 import logging
 import os
-from manager.utils import debug, env, to_flag
+
+from manager.env import env, to_flag
+from manager.utils import debug
 
 # pylint: disable=import-error,dangerous-default-value,invalid-name
 import manta as pymanta

@@ -7,7 +7,10 @@ import socket
 import subprocess
 import string
 import time
-from manager.utils import debug, env, log, get_ip, to_flag, \
+
+from manager.env import env, to_flag
+from manager.network import get_ip
+from manager.utils import debug, log, \
     WaitTimeoutError, UnknownPrimary
 
 # pylint: disable=import-error,no-self-use,invalid-name,dangerous-default-value

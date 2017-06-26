@@ -7,15 +7,15 @@ import subprocess
 import sys
 
 # pylint: disable=invalid-name,no-self-use,dangerous-default-value
-from manager.containerpilot import ContainerPilot
-from manager.libconsul import Consul
-from manager.libmanta import Manta
-from manager.libmysql import MySQL, MySQLError
-from manager.utils import \
-    log, get_ip, debug, \
-    UnknownPrimary, WaitTimeoutError, \
+from manager.client import MySQL, MySQLError
+from manager.config import ContainerPilot
+from manager.discovery import Consul
+from manager.env import PRIMARY_KEY, BACKUP_NAME
+from manager.network import get_ip
+from manager.storage.manta_stor import Manta
+from manager.utils import log, debug, \
     PRIMARY, REPLICA, UNASSIGNED, \
-    PRIMARY_KEY, BACKUP_NAME
+    UnknownPrimary, WaitTimeoutError
 
 
 class Node(object):
