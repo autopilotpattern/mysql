@@ -58,8 +58,13 @@ ship:
 # ------------------------------------------------
 # Run the example stack
 
+## Run the stack under local Compose
 run/compose:
 	cd examples/compose && TAG=$(tag) docker-compose -p my up -d
+
+## Scale up the local Compose stack
+run/compose/scale:
+	cd examples/compose && TAG=$(tag) docker-compose -p my scale mysql=2
 
 # ------------------------------------------------
 # Test running
