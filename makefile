@@ -107,12 +107,13 @@ test/unit-src:
 
 ## Run the integration test runner. Runs locally but targets Triton.
 test/triton:
-	$(call check_var, TRITON_PROFILE, MANTA_USER \
+	$(call check_var, TRITON_PROFILE, MANTA_USER, MANTA_KEY_ID \
 		required to run integration tests on Triton.)
 	docker run --rm \
 		-e TAG=$(tag) \
 		-e TRITON_PROFILE=$(TRITON_PROFILE) \
 		-e MANTA_USER=$(MANTA_USER) \
+		-e MANTA_KEY_ID=$(MANTA_KEY_ID) \
 		-e GIT_BRANCH=$(GIT_BRANCH) \
 		-v ~/.ssh:/root/.ssh:ro \
 		-v ~/.triton/profiles.d:/root/.triton/profiles.d:ro \

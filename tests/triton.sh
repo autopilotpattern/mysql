@@ -16,7 +16,8 @@ manta_url=${MANTA_URL:-https://us-east.manta.joyent.com}
 manta_user=${MANTA_USER:-triton_mysql}
 manta_subuser=${MANTA_SUBUSER:-triton_mysql}
 manta_role=${MANTA_ROLE:-triton_mysql}
-manta_bucket=${MANTA_BUCKET:-"${manta_user}/stor/triton_mysql"}
+manta_bucket=${MANTA_BUCKET:-"/${manta_user}/stor/triton_mysql"}
+manta_key_id=${MANTA_KEY_ID}
 
 project="$COMPOSE_PROJECT"
 manifest="$COMPOSE_FILE"
@@ -90,6 +91,7 @@ profile() {
         echo "MANTA_SUBUSER=$manta_subuser"
         echo "MANTA_ROLE=$manta_role"
         echo "MANTA_KEY=$manta_key"
+        echo "MANTA_KEY_ID=$manta_key_id"
     } > ./examples/triton/_env
 }
 
