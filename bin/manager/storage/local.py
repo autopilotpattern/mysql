@@ -25,6 +25,10 @@ class Local(object):
             os.mkdir(self.dir, 0770)
         except OSError:
             pass
+        try:
+            os.mkdir('/tmp/backup', 0770)
+        except OSError:
+            pass
 
         dst = '/tmp/backup/{}'.format(backup_id)
         src = '{}/{}'.format(self.dir, backup_id)

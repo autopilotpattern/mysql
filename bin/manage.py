@@ -78,7 +78,7 @@ class Node(object):
 
         # am I listed in the Consul PRIMARY_KEY??
         _, primary_name = self.consul.read_lock(PRIMARY_KEY)
-        log.debug('DEBUG: primary_name: %s' % primary_name)
+        log.debug('primary_name: %s' % primary_name)
         if primary_name == self.name:
             self.cp.state = PRIMARY
             return True
