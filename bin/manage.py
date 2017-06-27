@@ -44,6 +44,7 @@ class Node(object):
         the node `state` field needs to be set to UNASSIGNED if you want
         to force a check of Consul, etc.
         """
+        log.debug('state: %s' % self.cp.state)
         if self.cp.state != UNASSIGNED:
             return self.cp.state == PRIMARY
 
@@ -77,6 +78,7 @@ class Node(object):
 
         # am I listed in the Consul PRIMARY_KEY??
         _, primary_name = self.consul.read_lock(PRIMARY_KEY)
+        log.debug('DEBUG: primary_name: %s' % primary_name)
         if primary_name == self.name:
             self.cp.state = PRIMARY
             return True
@@ -268,8 +270,8 @@ def write_snapshot(node):
                                '--stream=tar',
                                '/tmp/backup'], stdout=f)
     log.info('snapshot completed, uploading to object store')
-    node.snaps.put_backup(backup_id, '/tmp/backup.tar')
-    log.info('snapshot uploaded to %s/%s', node.snaps.bucket, backup_id)
+    out = node.snaps.put_backup(backup_id, '/tmp/backup.tar')
+    log.info('snapshot uploaded to %s', out)
 
     # write the filename of the binlog to Consul so that we know if
     # we've rotated since the last backup.

@@ -36,3 +36,4 @@ class Local(object):
         """
         dst = '{}/{}'.format(self.dir, backup_id)
         copyfile(src, dst)
+        return dst
