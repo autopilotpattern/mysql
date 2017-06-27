@@ -177,6 +177,11 @@ cleanup:
 # -------------------------------------------------------
 # helper functions for testing if variables are defined
 
+## Cleanup local backups and log debris
+clean:
+	rm -rf tmp/
+	find . -name '*.log' -delete
+
 ## Print environment for build debugging
 debug:
 	@echo GIT_COMMIT=$(GIT_COMMIT)
