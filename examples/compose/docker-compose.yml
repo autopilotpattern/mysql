@@ -20,17 +20,14 @@ services:
       - SNAPSHOT_BACKEND=local
     volumes:
       # shared storage location for snapshots
-      - ../../tmp:/tmp/snapshots
-      - ../../bin/manage.py:/usr/local/bin/manage.py
-      - ../../bin/test.py:/usr/local/bin/test.py
-      - ../../bin/manager:/usr/local/bin/manager
+      - ${WORK_DIR:-../..}/tmp:/tmp/snapshots
     links:
       - consul:consul
 
   consul:
     image: consul:0.8.4
     command: >
-      agent -server -client=0.0.0.0 -bootstrap -ui
+      agent -server -client=0.0.0.0 -dev -ui
     restart: always
     mem_limit: 128m
     ports:

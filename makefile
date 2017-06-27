@@ -94,16 +94,29 @@ test/unit-src:
 		$(image):$(tag) \
 		$(python) test.py
 
-# TODO: add once we can run with non-Manta storage backend
-# Run the integration test runner against Compose locally.
-# test/compose:
-# 	docker run --rm \
-# 		-e TAG=$(tag) \
-# 		-e GIT_BRANCH=$(GIT_BRANCH) \
-# 		--network=bridge \
-# 		-v /var/run/docker.sock:/var/run/docker.sock \
-# 		-w /src \
-# 		$(testImage):$(tag) /src/compose.sh
+## Run the integration test runner against Compose locally.
+test/compose:
+	docker run --rm \
+		-e TAG=$(tag) \
+		-e GIT_BRANCH=$(GIT_BRANCH) \
+		-e WORK_DIR=/src \
+		--network=bridge \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v $(shell pwd)/tests/compose.sh:/src/compose.sh \
+		-w /src \
+		$(testImage):$(tag) /src/compose.sh
+
+
+test/shell:
+	docker run --rm -it \
+		-e TAG=$(tag) \
+		-e GIT_BRANCH=$(GIT_BRANCH) \
+		-e WORK_DIR=/src \
+		--network=bridge \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v $(shell pwd)/tests/compose.sh:/src/compose.sh \
+		-w /src \
+		$(testImage):$(tag) /bin/bash
 
 ## Run the integration test runner. Runs locally but targets Triton.
 test/triton:
