@@ -15,11 +15,9 @@ services:
       - MYSQL_REPL_PASSWORD=seekretReplPassword
       - MYSQL_DATABASE=demodb
       - BACKUP_TTL=120
-      - CONSUL_AGENT=1
       - LOG_LEVEL=DEBUG
       - CONSUL=consul
       - SNAPSHOT_BACKEND=local
-      - SNAPSHOT_DIR=/tmp/snapshots
     volumes:
       # shared storage location for snapshots
       - ../../tmp:/tmp/snapshots

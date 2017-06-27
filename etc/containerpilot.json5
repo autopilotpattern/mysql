@@ -7,10 +7,10 @@
     {
       name: "preStart",
       exec: "python /usr/local/bin/manage.py",
-      when: {
+      {{ if .CONSUL_AGENT }}when: {
         source: "consul-agent",
         once: "healthy"
-      }
+      }{{ end }}
     },
     {
       name: '{{ .SERVICE_NAME | default "mysql" }}',
