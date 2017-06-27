@@ -25,7 +25,7 @@ RUN sed -i 's/1.9.0/1.10.0/' /usr/local/bin/triton-docker \
 COPY examples/triton/docker-compose.yml /src/examples/triton/docker-compose.yml
 COPY examples/triton/setup.sh /src/examples/triton/setup.sh
 COPY examples/compose/docker-compose.yml /src/examples/compose/docker-compose.yml
-COPY examples/compose/setup.sh /src/examples/compose/setup.sh
+#COPY examples/compose/setup.sh /src/examples/compose/setup.sh
 
 # install test code
 COPY tests/triton.sh /src/triton.sh

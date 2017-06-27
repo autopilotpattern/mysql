@@ -36,7 +36,7 @@ services:
     restart: always
     mem_limit: 128m
     ports:
-      - 8500
+      - 8500:8500
     expose:
       - 53
       - 8300
