@@ -144,7 +144,7 @@ get_primary() {
     local got consul_ip
     consul_ip=$(triton ip "${project}_consul_1")
     got=$(curl -s "http://${consul_ip}:8500/v1/health/service/mysql-primary?passing" \
-                 | json -a Node.Node | wc -l | tr -d ' ')
+                 | json -a Node.Address)
     echo "$got"
 }
 
@@ -153,7 +153,7 @@ get_replica() {
     local got consul_ip
     consul_ip=$(triton ip "${project}_consul_1")
     got=$(curl -s "http://${consul_ip}:8500/v1/health/service/mysql?passing" \
-                 | json -a Node.Node | wc -l | tr -d ' ')
+                 | json -a Node.Address)
     echo "$got"
 }
 
@@ -178,7 +178,8 @@ check_replication() {
     i=0
     while [ $i -lt "$timeout" ]; do
         got=$(exec_query "$replica" "SELECT * FROM tbl1 WHERE field1=$testkey;")
-        if [ "$got" -eq "$testval" ]; then
+        got=$(echo "$got" | grep -c "$testkey: $testval")
+        if [ "$got" -eq 1 ]; then
             return
         fi
         i=$((i+1))
@@ -193,8 +194,9 @@ check_replication() {
 exec_query() {
     local node="$1"
     local query="$2"
-    out=$(triton-docker exec "$node" \
-                        "mysql -u $user -p${passwd} --vertical -e '$query' $db")
+    echo "$node"
+    out=$(triton-docker exec -i "$node" \
+                 mysql -u "$user" "-p${passwd}" --vertical -e "$query" "$db")
     echo "$out"
 }
 
