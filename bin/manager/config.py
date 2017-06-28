@@ -5,7 +5,9 @@ import subprocess
 
 import json5
 
-from manager.utils import debug, env, to_flag, log, UNASSIGNED
+from manager.env import env, to_flag
+from manager.utils import debug, log, UNASSIGNED
+
 
 # pylint: disable=invalid-name,no-self-use,dangerous-default-value
 

@@ -15,11 +15,12 @@ services:
     network_mode: bridge
     environment:
       - CONSUL_AGENT=1
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=DEBUG
       - SERVICE_NAME=mysql
+      - CONSUL=mc.svc.${TRITON_CNS_SEARCH_DOMAIN_PRIVATE}
 
   consul:
-    image: consul:0.7.1
+    image: consul:0.8.4
     command: >
       agent -server -client=0.0.0.0 -bootstrap -ui
     restart: always

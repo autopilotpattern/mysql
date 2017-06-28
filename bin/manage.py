@@ -7,26 +7,29 @@ import subprocess
 import sys
 
 # pylint: disable=invalid-name,no-self-use,dangerous-default-value
-from manager.containerpilot import ContainerPilot
-from manager.libconsul import Consul
-from manager.libmanta import Manta
-from manager.libmysql import MySQL, MySQLError
-from manager.utils import \
-    log, get_ip, debug, \
-    UnknownPrimary, WaitTimeoutError, \
+from manager.client import MySQL, MySQLError
+from manager.config import ContainerPilot
+from manager.discovery import Consul
+from manager.env import PRIMARY_KEY, BACKUP_NAME
+from manager.network import get_ip
+
+from manager.storage.manta_stor import Manta
+from manager.storage.local import Local
+
+from manager.utils import log, debug, \
     PRIMARY, REPLICA, UNASSIGNED, \
-    PRIMARY_KEY, BACKUP_NAME
+    UnknownPrimary, WaitTimeoutError
 
 
 class Node(object):
     """
     Node represents the state of our running container and carries
-    around the MySQL config, and clients for Consul and Manta.
+    around the MySQL config, and clients for Consul and Snapshots.
     """
-    def __init__(self, mysql=None, cp=None, consul=None, manta=None):
+    def __init__(self, mysql=None, cp=None, consul=None, snaps=None):
         self.mysql = mysql
         self.consul = consul
-        self.manta = manta
+        self.snaps = snaps
         self.cp = cp
 
         self.hostname = socket.gethostname()
@@ -41,6 +44,7 @@ class Node(object):
         the node `state` field needs to be set to UNASSIGNED if you want
         to force a check of Consul, etc.
         """
+        log.debug('state: %s' % self.cp.state)
         if self.cp.state != UNASSIGNED:
             return self.cp.state == PRIMARY
 
@@ -74,6 +78,7 @@ class Node(object):
 
         # am I listed in the Consul PRIMARY_KEY??
         _, primary_name = self.consul.read_lock(PRIMARY_KEY)
+        log.debug('primary_name: %s' % primary_name)
         if primary_name == self.name:
             self.cp.state = PRIMARY
             return True
@@ -110,7 +115,7 @@ def pre_start(node):
     if not os.path.isdir(os.path.join(my.datadir, 'mysql')):
         last_backup = node.consul.has_snapshot()
         if last_backup:
-            node.manta.get_backup(last_backup)
+            node.snaps.get_backup(last_backup)
             my.restore_from_snapshot(last_backup)
         else:
             if not my.initialize_db():
@@ -249,7 +254,7 @@ def snapshot_task(node):
 def write_snapshot(node):
     """
     Calls out to innobackupex to snapshot the DB, then pushes the file
-    to Manta and writes that the work is completed in Consul.
+    to Snapshot storage and writes that the work is completed in Consul.
     """
     now = datetime.utcnow()
     # we don't want .isoformat() here because of URL encoding
@@ -265,8 +270,8 @@ def write_snapshot(node):
                                '--stream=tar',
                                '/tmp/backup'], stdout=f)
     log.info('snapshot completed, uploading to object store')
-    node.manta.put_backup(backup_id, '/tmp/backup.tar')
-    log.info('snapshot uploaded to %s/%s', node.manta.bucket, backup_id)
+    out = node.snaps.put_backup(backup_id, '/tmp/backup.tar')
+    log.info('snapshot uploaded to %s', out)
 
     # write the filename of the binlog to Consul so that we know if
     # we've rotated since the last backup.
@@ -396,10 +401,15 @@ def main():
             sys.exit(1)
 
     my = MySQL()
-    manta = Manta()
+
+    if os.environ.get('SNAPSHOT_BACKEND', 'manta') == 'local':
+        snaps = Local()
+    else:
+        snaps = Manta()
+
     cp = ContainerPilot()
     cp.load()
-    node = Node(mysql=my, consul=consul, manta=manta, cp=cp)
+    node = Node(mysql=my, consul=consul, snaps=snaps, cp=cp)
 
     cmd(node)
 

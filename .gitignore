@@ -8,6 +8,7 @@ manta.pub
 
 # temp
 python-manta/
+tmp/
 
 # macos frustration
 .DS_Store

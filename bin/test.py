@@ -11,10 +11,13 @@ import json5
 import mock
 
 import manage
-from manager.containerpilot import ContainerPilot
-from manager.libconsul import Consul
-from manager.libmanta import Manta
-from manager.libmysql import MySQL
+# pylint: disable=invalid-name,no-self-use,dangerous-default-value
+from manager.client import MySQL
+from manager.config import ContainerPilot
+from manager.discovery import Consul
+from manager.env import *
+from manager.network import *
+from manager.storage.manta_stor import Manta
 from manager.utils import *
 
 
@@ -26,7 +29,7 @@ class TestPreStart(unittest.TestCase):
         manta = mock.MagicMock()
         my = mock.MagicMock()
         my.datadir = tempfile.mkdtemp()
-        self.node = manage.Node(consul=consul, manta=manta, mysql=my)
+        self.node = manage.Node(consul=consul, snaps=manta, mysql=my)
 
     def tearDown(self):
         logging.getLogger().setLevel(logging.DEBUG)
@@ -39,7 +42,7 @@ class TestPreStart(unittest.TestCase):
         manage.pre_start(self.node)
         self.node.consul.has_snapshot.assert_called_once()
         self.node.mysql.initialize_db.assert_called_once()
-        self.assertFalse(self.node.manta.get_backup.called)
+        self.assertFalse(self.node.snaps.get_backup.called)
         self.assertFalse(self.node.mysql.restore_from_snapshot.called)
 
     def test_pre_start_snapshot_complete(self):
@@ -50,7 +53,7 @@ class TestPreStart(unittest.TestCase):
         self.node.consul.has_snapshot.return_value = True
         manage.pre_start(self.node)
         self.node.consul.has_snapshot.assert_called_once()
-        self.node.manta.get_backup.assert_called_once()
+        self.node.snaps.get_backup.assert_called_once()
         self.node.mysql.restore_from_snapshot.assert_called_once()
         self.assertFalse(self.node.mysql.initialize_db.called)
 
@@ -79,7 +82,7 @@ class TestPreStart(unittest.TestCase):
         self.node.consul.client.kv.get.side_effect = kv_gets()
 
         manage.pre_start(self.node)
-        self.node.manta.get_backup.assert_called_once()
+        self.node.snaps.get_backup.assert_called_once()
         self.assertEqual(self.node.consul.client.kv.get.call_count, 2)
         self.node.mysql.restore_from_snapshot.assert_called_once()
         self.assertFalse(self.node.mysql.initialize_db.called)
@@ -601,7 +604,7 @@ class TestSnapshotTask(unittest.TestCase):
         my.datadir = tempfile.mkdtemp()
         cp.state = PRIMARY
         my.datadir = tempfile.mkdtemp()
-        self.node = manage.Node(consul=consul, cp=cp, manta=manta, mysql=my)
+        self.node = manage.Node(consul=consul, cp=cp, snaps=manta, mysql=my)
 
     def tearDown(self):
         logging.getLogger().setLevel(logging.DEBUG)
@@ -837,9 +840,8 @@ class TestContainerPilotConfig(unittest.TestCase):
         cp.load(envs=self.environ)
 
         self.assertEqual(cp.config['consul'], 'localhost:8500')
-        cmd = cp.config['jobs'][4]['exec']
-        host_cfg_idx = cmd.index('-retry-join') + 1
-        self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
+        health_check_exec = cp.config['jobs'][4]['health']['exec']
+        self.assertIn('my.consul.example.com', health_check_exec)
         self.assertEqual(cp.state, UNASSIGNED)
 
     def test_parse_without_consul_agent(self):
@@ -870,9 +872,8 @@ class TestContainerPilotConfig(unittest.TestCase):
         with open(temp_file.name, 'r') as updated:
             config = json5.loads(updated.read())
             self.assertEqual(config['consul'], 'localhost:8500')
-            cmd = config['jobs'][4]['exec']
-            host_cfg_idx = cmd.index('-retry-join') + 1
-            self.assertEqual(cmd[host_cfg_idx], 'my.consul.example.com')
+            health_check_exec = config['jobs'][4]['health']['exec']
+            self.assertIn('my.consul.example.com', health_check_exec)
 
 
 class TestMantaConfig(unittest.TestCase):

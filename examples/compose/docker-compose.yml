@@ -1,0 +1,44 @@
+version: '2.1'
+
+services:
+  mysql:
+    image: autopilotpattern/mysql:${TAG:-latest}
+    mem_limit: 512m
+    restart: always
+    expose:
+      - 3306
+    network_mode: bridge
+    environment:
+      - MYSQL_USER=dbuser
+      - MYSQL_PASSWORD=seekretPassword
+      - MYSQL_REPL_USER=repluser
+      - MYSQL_REPL_PASSWORD=seekretReplPassword
+      - MYSQL_DATABASE=demodb
+      - BACKUP_TTL=120
+      - LOG_LEVEL=DEBUG
+      - CONSUL=consul
+      - SNAPSHOT_BACKEND=local
+    volumes:
+      # shared storage location for snapshots
+      - ${WORK_DIR:-../..}/tmp:/tmp/snapshots
+    links:
+      - consul:consul
+
+  consul:
+    image: consul:0.8.4
+    command: >
+      agent -server -client=0.0.0.0 -dev -ui
+    restart: always
+    mem_limit: 128m
+    ports:
+      - 8500:8500
+    expose:
+      - 53
+      - 8300
+      - 8301
+      - 8302
+      - 8400
+      - 8500
+    network_mode: bridge
+    dns:
+      - 127.0.0.1
