@@ -98,7 +98,7 @@ get_primary() {
     local got consul_ip
     consul_ip=$(docker inspect "${project}_consul_1" | json -a NetworkSettings.IPAddress)
     got=$(curl -s "http://${consul_ip}:8500/v1/health/service/mysql-primary?passing" \
-                 | json -a Node.Node | wc -l | tr -d ' ')
+                 | json -a Node.Address)
     echo "$got"
 }
 
@@ -107,7 +107,7 @@ get_replica() {
     local got consul_ip
     consul_ip=$(docker inspect "${project}_consul_1" | json -a NetworkSettings.IPAddress)
     got=$(curl -s "http://${consul_ip}:8500/v1/health/service/mysql?passing" \
-                 | json -a Node.Node | wc -l | tr -d ' ')
+                 | json -a Node.Address)
     echo "$got"
 }
 
@@ -216,6 +216,8 @@ test-failover() {
 
     # verify working
     check_replication "${project}_mysql_1" "${project}_mysql_2" "1" "a"
+
+    sleep 15
 
     # force failover and verify again
     stop "mysql_1"
