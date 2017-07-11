@@ -19,6 +19,7 @@ RUN set -ex \
     && pip install \
        python-Consul==0.7.0 \
        manta==2.5.0 \
+       minio==2.2.4 \
        mock==2.0.0 \
        json5==0.2.4 \
     # \

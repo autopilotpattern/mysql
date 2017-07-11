@@ -14,6 +14,7 @@ from manager.env import PRIMARY_KEY, BACKUP_NAME
 from manager.network import get_ip
 
 from manager.storage.manta_stor import Manta
+from manager.storage.minio_stor import Minio
 from manager.storage.local import Local
 
 from manager.utils import log, debug, \
