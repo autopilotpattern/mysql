@@ -403,8 +403,11 @@ def main():
 
     my = MySQL()
 
-    if os.environ.get('SNAPSHOT_BACKEND', 'manta') == 'local':
+    snapshot_backend = os.environ.get('SNAPSHOT_BACKEND', 'manta')
+    if snapshot_backend == 'local':
         snaps = Local()
+    elif snapshot_backend == 'minio':
+        snaps = Minio()
     else:
         snaps = Manta()
 

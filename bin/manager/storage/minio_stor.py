@@ -1,10 +1,13 @@
 """ Module for storing snapshots in shared local disk """
+import logging
 import os
 from shutil import copyfile
 
-from manager.env import env
+from manager.env import env, to_flag
 from manager.utils import debug
-from minio import Minio as pyminio
+from minio import Minio as pyminio, error as minioerror
+
+logging.getLogger('manta').setLevel(logging.INFO)
 
 class Minio(object):
     """
@@ -18,28 +21,33 @@ class Minio(object):
         self.bucket = env('MINIO_BUCKET', 'backups', envs)
         self.location = env('MINIO_LOCATION', 'us-east-1', envs)
         self.url = env('MINIO_URL', 'minio:9000')
-        is_tls - env('MINIO_TLS_INSECURE', False, envs, fn=to_flag)
+        is_tls = env('MINIO_TLS_SECURE', False, envs, fn=to_flag)
 
         self.client = pyminio(
             self.url,
             access_key=self.access_key,
             secret_key=self.secret_key,
             secure=is_tls)
-
         try:
             self.client.make_bucket(self.bucket, location=self.location)
-        except:
-            raise
+        except minioerror.BucketAlreadyOwnedByYou:
+            pass
 
     @debug
     def get_backup(self, backup_id):
         """
-        Download file from Manta, allowing exceptions to bubble up.
+        Download file from Minio, allowing exceptions to bubble up.
         """
-        return NotImplementedError
+        try:
+            os.mkdir('/tmp/backup', 0770)
+        except OSError:
+            pass
+        outfile = '/tmp/backup/{}'.format(backup_id)
+        self.client.fget_object(self.bucket, backup_id, outfile)
 
-    def put_backup(self, backup_id, src):
+    def put_backup(self, backup_id, infile):
         """
         Upload the backup file to the expected path.
         """
-        return NotImplementedError
+        self.client.fput_object(self.bucket, backup_id, infile)
+        return backup_id
