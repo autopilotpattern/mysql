@@ -17,12 +17,15 @@ services:
       - BACKUP_TTL=120
       - LOG_LEVEL=DEBUG
       - CONSUL=consul
-      - SNAPSHOT_BACKEND=local
+      - SNAPSHOT_BACKEND=minio
+      - MINIO_ACCESS_KEY=supersecretaccesskey
+      - MINIO_SECRET_KEY=supersecretsecretkey
     volumes:
       # shared storage location for snapshots
       - ${WORK_DIR:-../..}/tmp:/tmp/snapshots
     links:
       - consul:consul
+      - minio:minio
 
   consul:
     image: consul:0.8.4
@@ -42,3 +45,14 @@ services:
     network_mode: bridge
     dns:
       - 127.0.0.1
+
+  minio:
+    image: minio/minio
+    command: server /export
+    restart: always
+    expose:
+      - 9000
+    network_mode: bridge
+    environment:
+      - MINIO_ACCESS_KEY=supersecretaccesskey
+      - MINIO_SECRET_KEY=supersecretsecretkey

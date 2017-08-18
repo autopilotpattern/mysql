@@ -14,6 +14,7 @@ from manager.env import PRIMARY_KEY, BACKUP_NAME
 from manager.network import get_ip
 
 from manager.storage.manta_stor import Manta
+from manager.storage.minio_stor import Minio
 from manager.storage.local import Local
 
 from manager.utils import log, debug, \
@@ -402,8 +403,11 @@ def main():
 
     my = MySQL()
 
-    if os.environ.get('SNAPSHOT_BACKEND', 'manta') == 'local':
+    snapshot_backend = os.environ.get('SNAPSHOT_BACKEND', 'manta')
+    if snapshot_backend == 'local':
         snaps = Local()
+    elif snapshot_backend == 'minio':
+        snaps = Minio()
     else:
         snaps = Manta()
 
