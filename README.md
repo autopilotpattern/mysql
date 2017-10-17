@@ -28,7 +28,7 @@ A running cluster includes the following components:
 - [MySQL](https://dev.mysql.com/): we're using MySQL5.6 via [Percona Server](https://www.percona.com/software/mysql-database/percona-server), and [`xtrabackup`](https://www.percona.com/software/mysql-database/percona-xtrabackup) for running hot snapshots.
 - [ContainerPilot](https://www.joyent.com/containerpilot): included in our MySQL containers to orchestrate bootstrap behavior and coordinate replication using keys and checks stored in Consul in the `preStart`, `health`, and `onChange` handlers.
 - [Consul](https://www.consul.io/): is our service catalog that works with ContainerPilot and helps coordinate service discovery, replication, and failover
-- [Manta](https://www.joyent.com/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
+- [Manta](https://www.joyent.com/triton/object-storage): the Joyent object store, for securely and durably storing our MySQL snapshots.
 - `manage.py`: a small Python application that ContainerPilot's lifecycle hooks will call to bootstrap MySQL, perform health checks, manage replication setup, and perform coordinated failover.
 
 The lifecycle of a MySQL container is managed by 4 lifecycle hooks in the `manage.py` application: `pre_start`, `health`, `on_change`, and `snapshot_task`.
