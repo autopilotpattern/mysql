@@ -103,6 +103,14 @@ Pass these variables via an `_env` file. The included `setup.sh` can be used to 
 
 - `MYSQL_USER`: this user will be set up as the default non-root user on the node
 - `MYSQL_PASSWORD`: this user will be set up as the default non-root user on the node
+
+
+#### Snapshots
+These variables control where the database snapshots are saved.
+
+- `SNAPSHOT_BACKEND`: Select from: `manta`, `minio`, or `local` (Defaults to `manta`.)
+
+##### Manta
 - `MANTA_URL`: the full Manta endpoint URL. (ex. `https://us-east.manta.joyent.com`)
 - `MANTA_USER`: the Manta account name.
 - `MANTA_SUBUSER`: the Manta subuser account name, if any.
@@ -111,6 +119,19 @@ Pass these variables via an `_env` file. The included `setup.sh` can be used to 
 - `MANTA_PRIVATE_KEY`: the private ssh key for the Manta account/subuser; the included `setup.sh` will encode this automatically
 - `MANTA_BUCKET`: the path on Manta where backups will be stored. (ex. `/myaccount/stor/triton-mysql`); the bucket must already exist and be writeable by the `MANTA_USER`/`MANTA_PRIVATE_KEY`
 
+##### Minio
+- `MINIO_ACCESS_KEY`: S3 Access key to login.
+- `MINIO_SECRET_KEY`: S3 Secret key to login.
+- `MINIO_BUCKET`: The S3 bucket to put snapshots in. (Defaults to `backups`.)
+- `MINIO_LOCATION`: Define the region/ location where the bucket is. (Defaults to `us-east-1`.)
+- `MINIO_URL`: The url of minio. (Defaults to `minio:9000`.)
+- `MINIO_TLS_SECURE`: Use a secure https connection to minio. (Defaults to `false`.)
+
+##### Local
+- `STORAGE_DIR`: The local directory to store snapshots. (Defaults to `/tmp/snapshots`.)
+
+#### Optional Configs
+
 These variables are optional but you most likely want them:
 
 - `SERVICE_NAME`: the name by which this instance will register itself in consul. If you do not provide one, defaults to `"mysql"`.
@@ -118,17 +139,21 @@ These variables are optional but you most likely want them:
 - `MYSQL_REPL_PASSWORD`: this password will be used on all instances to set up MySQL replication. If not set, then replication will not be set up on the replicas.
 - `MYSQL_DATABASE`: create this database on startup if it doesn't already exist. The `MYSQL_USER` user will be granted superuser access to that DB.
 - `LOG_LEVEL`: will set the logging level of the `manage.py` application. It defaults to `DEBUG` and uses the Python stdlib [log levels](https://docs.python.org/2/library/logging.html#levels). The `DEBUG` log level is extremely verbose -- in production you'll want this to be at `INFO` or above.
-- `CONSUL` is the hostname for the Consul instance(s). Defaults to `consul`.
+- `CONSUL` is the hostname for the Consul instance(s). (Defaults to `consul`.)
+
+#### Consul keys
 
 The following variables control the names of keys written to Consul. They are optional with sane defaults, but if you are using Consul for many other services you might have requirements to namespace keys:
 
 - `PRIMARY_KEY`: The key used to record a lock on what node is primary. (Defaults to `${SERVICE_NAME}-primary`.)
-- `BACKUP_LOCK_KEY`: The key used to record a lock on a running snapshot. (Defaults to `mysql-backup-runninbg`.)
+- `BACKUP_LOCK_KEY`: The key used to record a lock on a running snapshot. (Defaults to `mysql-backup-running`.)
 - `LAST_BACKUP_KEY`: The key used to store the path and timestamp of the most recent backup. (Defaults to `mysql-last-backup`.)
 - `LAST_BINLOG_KEY`: The key used to store the filename of the most recent binlog file on the primary. (Defaults to `mysql-last-binlog`.)
 - `BACKUP_NAME`: The name of the backup file that's stored on Manta, with optional [strftime](https://docs.python.org/2/library/time.html#time.strftime) directives. (Defaults to `mysql-backup-%Y-%m-%dT%H-%M-%SZ`.)
 - `BACKUP_TTL`: Time in seconds to wait between backups. (Defaults to `86400`, or 24 hours.)
 - `SESSION_NAME`: The name used for session locks. (Defaults to `mysql-primary-lock`.)
+
+#### MySQL
 
 These variables *may* be passed but it's not recommended to do this. Instead we'll set a one-time root password during DB initialization; the password will be dropped into the logs. Security can be improved by using a key management system in place of environment variables. The constructor for the `Node` class in `manage.py` would be a good place to hook in this behavior, which is out-of-scope for this demonstration.
 
